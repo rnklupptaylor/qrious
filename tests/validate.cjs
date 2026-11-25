@@ -138,6 +138,12 @@ if (block) {
   check(errs[0] > errs[1] && errs[1] > errs[2] && errs[2] / target < 1e-4,
     'sums approach integrals as Δx → 0 (x_{1,2} errors ' + errs.map((e) => e.toExponential(1)).join(', ') + ' µm)');
 
+  // Lesson 04 worked example: fly ash Q_3 in 10 equal classes from 1 to 100 µm, sums with class means
+  const fa10 = Q.discretise(fa3, Q.limitsByWidth(1, 100, 9.9));
+  abs(Q.momentDiscrete(fa10, 1), 50.5, 1e-9, 'fly ash, 10 classes: x_{1,3} from the sum is exact / µm');
+  near(Math.sqrt(Q.momentDiscrete(fa10, 2) - Math.pow(Q.momentDiscrete(fa10, 1), 2)), 28.44, 0.001, 'fly ash, 10 classes: s_3 from the sum (Δx²/12 too small) / µm');
+  near(1 / Q.momentDiscrete(fa10, -1), 25.71, 0.001, 'fly ash, 10 classes: x_{1,2} from the sum (20 % too large) / µm');
+
   // A cumulative curve made in the builder must rise from 0 to 1
   check(Q.validCumulative([[1, 0], [3, 0.4], [9, 1]]).length === 0, 'builder: a rising curve from 0 to 1 is valid');
   check(Q.validCumulative([[1, 0], [3, 0.6], [5, 0.4], [9, 1]]).some((p) => p.startsWith('falls')), 'builder: a falling curve is flagged');

@@ -345,6 +345,21 @@ table.dt.wid{min-width:460px}
   .topnav select{max-width:none}
 }
 @media (min-width:1700px){body{font-size:17px}}
+
+/* lesson 04 */
+.plot svg .qline.cq{stroke-width:2.4;stroke-dasharray:8 5}
+.plot svg .exact{fill:none;stroke:var(--ink);stroke-width:1.4;stroke-linejoin:round;opacity:.75}
+.plot svg .cl{fill:none;stroke:var(--rc);stroke-width:2}
+.plot svg .cl.dash{stroke-dasharray:6 4}
+.plot svg .ring{fill:var(--surface);stroke:var(--rc);stroke-width:2}
+table.dt .diff{font-size:12px;color:var(--muted);margin-left:3px}
+table.dt.cmp{min-width:540px}
+table.dt.small{min-width:0}
+table.dt.conv4{min-width:420px;margin-top:8px}
+.steps.fly .text{min-height:0}
+.formulas .f.pair{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;column-gap:14px;overflow:visible}
+.formulas .f.pair>div{max-width:100%}
+.formulas .f.pair .katex-display{margin:4px 0}
 </style>
 </head>
 <body class="level-ess">
@@ -3147,6 +3162,765 @@ var App = (function () {
     gens: GENS,
   });
 })();
+/* ==== part: lesson04.js ==== */
+/* Lesson 04: Discrete and continuous. A random sample of N particles, sorted into classes of width Δx, gives a
+   histogram that settles onto the continuous density as N grows and Δx shrinks. Every moment is computed as a sum
+   over classes and as an integral side by side, which separates the class-width error from the sampling error.
+   Fly ash is worked step by step from Q_3 to q_3, q_2 and Q_2. */
+(function () {
+  'use strict';
+  const { T, md, h, card, tog, dd, param, slider, presetBox, Plot, polyline, ticks, sig, fix, group, rcol, swQ, swq, R, K } = App;
+  const { rOptions, niceMax, tableHTML } = App.shared;
+  const RS = [0, 1, 2, 3];
+  const U = 'µm', UT = '\\mu\\mathrm{m}';
+  const NMAX = 100000;
+  const num = (v, u) => `<span class="num">${sig(v, 3)}${u === '' ? '' : ' ' + (u || U)}</span>`;
+  const tnum = (v) => String(sig(v, 3));
+  const nfmt = (n) => group(String(Math.round(n)));
+  const dxs = (v) => `<span class="num">${String(+(+v).toPrecision(3))} ${U}</span>`;
+  const pct = (v) => (v == null || !isFinite(v)) ? '–' : Math.abs(v) < 0.05 ? '0 %' : (v > 0 ? '+' : '−') + sig(Math.abs(v), 2) + ' %';
+  const rel = (v, ref) => 100 * (v - ref) / ref;
+  const sx = (k) => `<tspan dy="3" style="font-size:9.5px">${k}</tspan>`;
+  // a formula made of two halves; the halves wrap onto two lines on narrow screens
+  const fp = (tex, cls) => {
+    let items = tex.split(',\\qquad ');
+    if (items.length > 1) items = items.map((p, i) => p + (i < items.length - 1 ? ',' : ''));
+    else items = tex.split(' \\;\\xrightarrow').map((p, i) => (i ? '\\xrightarrow' + p : p));
+    return `<div class="f pair${cls ? ' ' + cls : ''}">${items.map((p) => `<div>${K(p, true)}</div>`).join('')}</div>`;
+  };
+  const reduced = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  /* ---------- distributions ---------- */
+  const SHAPES = {
+    pl: { l: 0, xr: [0, 30], dxr: [0.2, 12], dx0: 2, make: () => QMath.piecewiseLinear([[2, 0], [6, 1], [10, 0.35], [16, 0.55], [26, 0]], 0, U) },
+    tri: { l: 0, xr: [0, 30], dxr: [0.2, 12], dx0: 2, make: () => QMath.piecewiseLinear([[2, 0], [6, 1], [26, 0]], 0, U) },
+    two: { l: 0, xr: [0, 30], dxr: [0.2, 12], dx0: 1, make: () => QMath.mixture(QMath.piecewiseLinear([[2, 0], [7, 1], [12, 0]], 0, U), QMath.piecewiseLinear([[14, 0], [20, 1], [26, 0]], 0, U), 0.6) },
+    fly: { l: 3, xr: [0, 100], dxr: [0.5, 50], dx0: 9.9, make: () => QMath.uniformQ(1, 100, 3, U) },
+  };
+  const SEEDK = { pl: 1, tri: 2, two: 3, fly: 4 };
+  const byCache = {};
+  function dists(shape) {
+    if (!byCache[shape]) { const b = SHAPES[shape].make(); byCache[shape] = RS.map((r) => (r === b.r ? b : QMath.convertCont(b, r))); }
+    return byCache[shape];
+  }
+  // equal classes that span the support exactly: Δx is snapped to (x_max - x_min)/n
+  function classesOf(a, b, dx) {
+    const n = Math.max(1, Math.round((b - a) / dx)), lim = [];
+    for (let i = 0; i <= n; i++) lim.push(+(a + (b - a) * i / n).toFixed(10));
+    return { lim: lim, n: n, dx: (b - a) / n };
+  }
+  const classes = (shape, dx) => { const c = dists(shape)[0]; return classesOf(c.xmin, c.xmax, dx); };
+  const snapDx = (shape, dx) => classes(shape, dx).dx;
+  const sampCache = new Map();
+  function samples(shape, rs, seed) {
+    const key = shape + '|' + rs + '|' + seed;
+    let v = sampCache.get(key);
+    if (!v) {
+      if (sampCache.size > 10) sampCache.clear();
+      v = QMath.sampleCont(dists(shape)[rs], NMAX, QMath.rng(seed * 7919 + SEEDK[shape] * 104729 + rs * 31));
+      sampCache.set(key, v);
+    }
+    return v;
+  }
+  // histogram of the first N draws; with wpow the draws are particles, each weighed by x^wpow
+  function histOf(xs, N, lim, r, wpow) {
+    const n = lim.length - 1, a = lim[0], w = (lim[n] - a) / n, m = new Array(n).fill(0), cnt = new Array(n).fill(0);
+    for (let k = 0; k < N; k++) {
+      const x = xs[k];
+      let i = Math.floor((x - a) / w);
+      if (i < 0) i = 0; else if (i >= n) i = n - 1;
+      cnt[i]++; m[i] += wpow ? Math.pow(x, wpow) : 1;
+    }
+    const d = QMath.discrete(lim, m, r, U);
+    d.cnt = cnt;
+    return d;
+  }
+  function sumStats(d, r) {
+    const M = (k) => QMath.momentDiscrete(d, k), x1 = M(1), M2 = M(2);
+    return { x1: x1, M2: M2, s: Math.sqrt(Math.max(0, M2 - x1 * x1)), x50: QMath.quantileDiscrete(d, 0.5), x12: r === 2 ? x1 : M(3 - r) / M(2 - r) };
+  }
+  function qmaxOf(c) { let m = 0; for (let i = 0; i <= 400; i++) m = Math.max(m, QMath.qCont(c, c.xmin + (c.xmax - c.xmin) * i / 400)); return m; }
+  function contStats(c, r) {
+    const M = (k) => QMath.momentCont(c, k), x1 = M(1), M2 = M(2);
+    return { x1: x1, M2: M2, s: Math.sqrt(Math.max(0, M2 - x1 * x1)), x50: QMath.quantileCont(c, 0.5), x12: r === 2 ? x1 : M(3 - r) / M(2 - r), qmax: qmaxOf(c) };
+  }
+  const intCache = {};
+  const intStats = (shape, r) => intCache[shape + r] || (intCache[shape + r] = contStats(dists(shape)[r], r));
+  // relative error of the exact class sums for a range of class widths (no sampling)
+  const convCache = {};
+  function convergence(shape, r) {
+    const key = shape + r;
+    if (convCache[key]) return convCache[key];
+    const S = SHAPES[shape], I = intStats(shape, r), c = dists(shape)[r], out = [], seen = new Set();
+    for (let i = 0; i <= 64; i++) {
+      const C = classes(shape, S.dxr[0] * Math.pow(S.dxr[1] / S.dxr[0], i / 64));
+      if (seen.has(C.n)) continue;
+      seen.add(C.n);
+      const e = sumStats(QMath.discretise(c, C.lim), r);
+      out.push({ dx: C.dx, x1: rel(e.x1, I.x1), s: rel(e.s, I.s), x12: rel(e.x12, I.x12) });
+    }
+    out.sort((a, b) => a.dx - b.dx);
+    return (convCache[key] = out);
+  }
+  // everything a view needs, for state s
+  let vKey = null, vVal = null;
+  function view(s) {
+    const key = [s.shape, s.r, s.N, s.dx, s.seed, s.count].join('|');
+    if (key === vKey) return vVal;
+    const C = classes(s.shape, s.dx), c = dists(s.shape)[s.r], cnt = !!s.count && s.r > 0;
+    const hist = histOf(samples(s.shape, cnt ? 0 : s.r, s.seed), s.N, C.lim, s.r, cnt ? s.r : 0);
+    const exact = QMath.discretise(c, C.lim), I = intStats(s.shape, s.r);
+    const emax = Math.max.apply(null, exact.q), cmax = Math.min(I.qmax, 3 * emax), ref = Math.max(cmax, emax);
+    vVal = { C: C, c: c, hist: hist, exact: exact, I: I, cnt: cnt, r: s.r, xr: SHAPES[s.shape].xr,
+      top: niceMax(Math.min(Math.max(ref, Math.max.apply(null, hist.q)), 2.2 * ref)) };
+    vKey = key;
+    return vVal;
+  }
+
+  /* ---------- plots ---------- */
+  function xsFor(d, n) {
+    const out = [];
+    for (let i = 0; i <= n; i++) out.push(d.xmin + (d.xmax - d.xmin) * i / n);
+    if (d.xmin > 0 && d.xmax / d.xmin > 20) for (let i = 0; i <= 80; i++) out.push(d.xmin * Math.pow(d.xmax / d.xmin, i / 80));
+    d.segs.forEach((g) => out.push(g.a, g.b));
+    return out.sort((a, b) => a - b);
+  }
+  /* g = {r, c (continuous q_r), hist (bars), exact (outline), curve, showQ, xr, top, extra} */
+  function drawHist(F, g) {
+    let s = F.axes({ noLeft: !g.showQ });
+    const lim = F.o.yR.max * 1.04, Yq = (v) => F.YR(Math.min(v, lim));
+    s += `<g class="${rcol(g.r)}">`;
+    const bars = g.hist;
+    if (bars) {
+      const thin = F.X(bars.x[1]) - F.X(bars.x[0]) < 5;
+      for (let i = 0; i < bars.n; i++) {
+        if (!(bars.q[i] > 0)) continue;
+        const x0 = F.X(bars.x[i]), x1 = F.X(bars.x[i + 1]), y = Yq(bars.q[i]);
+        s += `<rect class="bar"${thin ? ' style="stroke-width:.5"' : ''} x="${x0.toFixed(1)}" y="${y.toFixed(1)}" width="${(x1 - x0).toFixed(2)}" height="${(F.y0 - y).toFixed(1)}"/>`;
+      }
+    }
+    if (g.exact) {
+      const d = g.exact;
+      let p = `M${F.X(d.x[0]).toFixed(1)} ${F.y0}`;
+      for (let i = 0; i < d.n; i++) p += `V${Yq(d.q[i]).toFixed(1)}H${F.X(d.x[i + 1]).toFixed(1)}`;
+      s += `<path class="exact" d="${p}V${F.y0}"/>`;
+    }
+    if (g.curve !== false) {
+      const c = g.c, pts = [[F.X(c.xmin), F.y0]];
+      xsFor(c, 300).forEach((x) => pts.push([F.X(x), Yq(QMath.qCont(c, x))]));
+      pts.push([F.X(c.xmax), F.y0]);
+      s += polyline(pts, 'qline cq');
+    }
+    if (g.showQ) {
+      const c = g.c, pts = [[F.X(g.xr[0]), F.YL(0)]];
+      xsFor(c, 300).forEach((x) => pts.push([F.X(x), F.YL(QMath.QCont(c, x))]));
+      pts.push([F.X(g.xr[1]), F.YL(1)]);
+      s += polyline(pts, 'Qline', 'style="opacity:.5"');
+      const d = bars || g.exact;
+      if (d) {
+        const qp = d.x.map((x, i) => [F.X(x), F.YL(d.Q[i])]);
+        s += polyline(qp, 'Qline', 'style="stroke-width:1.6"');
+        if (d.n <= 40) qp.forEach((p) => { s += `<circle class="pt" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3"/>`; });
+      }
+    }
+    s += '</g>';
+    if (g.extra) s += g.extra(F);
+    return s;
+  }
+  function histPlot(get, opt) {
+    opt = opt || {};
+    return Plot({
+      height: (w) => Math.round(Math.min(opt.maxH || 360, Math.max(opt.minH || 220, w * (opt.ratio || 0.5)))),
+      spec: () => { const g = get(); return { x: { min: g.xr[0], max: g.xr[1] }, yL: { min: 0, max: 1 }, yR: { min: 0, max: g.top }, small: !!opt.small }; },
+      head: () => {
+        const g = get(), r = g.r;
+        const left = g.showQ ? `<span class="ax ${rcol(r)}">${swQ(r)}${K('Q_' + r + '\\;/\\;\\text{–}')}</span>` : '<span></span>';
+        const parts = [];
+        if (g.hist) parts.push(swq(r, true) + K('q_' + r + '(\\bar x_i)'));
+        if (g.curve !== false) parts.push(swq(r, false) + K('q_' + r + '(x)'));
+        return left + `<span class="ax ${rcol(r)}">${parts.join(' ')}${K('\\;/\\;' + UT + '^{-1}')}</span>`;
+      },
+      foot: () => `<span class="note">${opt.footNote ? opt.footNote() : ''}</span><span>${K('x\\;/\\;' + UT)}</span>`,
+      aria: () => T('Histogram of a random sample over the continuous density', 'Histogramm einer Zufallsstichprobe über der stetigen Dichte'),
+      draw: (F) => drawHist(F, get()),
+      onClick: opt.onClick,
+    });
+  }
+  /* sum minus integral against the class width; g = {conv, lines, dx, sample, range, Y} */
+  function drawConv(F, g) {
+    let s = F.axes();
+    s += `<line class="axis" x1="${F.x0}" x2="${F.x1}" y1="${F.YL(0).toFixed(1)}" y2="${F.YL(0).toFixed(1)}"/>`;
+    const Yc = (v) => F.YL(Math.max(-g.Y, Math.min(g.Y, v)));
+    const ends = [];
+    g.lines.forEach((L) => {
+      s += `<g class="${rcol(L.r)}">${polyline(g.conv.map((p) => [F.X(p.dx), Yc(p[L.key])]), 'cl' + (L.dash ? ' dash' : ''))}</g>`;
+      ends.push({ y: Yc(g.conv[g.conv.length - 1][L.key]), L: L });
+    });
+    ends.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+    ends.forEach((e) => { s += `<text class="lab ${rcol(e.L.r)}" x="${F.x1 + 6}" y="${(e.y + 4).toFixed(1)}" style="fill:var(--rc);font-weight:700">${e.L.svg}</text>`; });
+    const X = F.X(g.dx);
+    s += `<line class="cursor" x1="${X.toFixed(1)}" x2="${X.toFixed(1)}" y1="${F.y1}" y2="${F.y0}"/>`;
+    if (g.sample) g.lines.forEach((L) => { s += `<circle class="ring ${rcol(L.r)}" cx="${X.toFixed(1)}" cy="${Yc(g.sample[L.key]).toFixed(1)}" r="4.5"/>`; });
+    return s;
+  }
+  function convPlot(get) {
+    return Plot({
+      height: (w) => Math.round(Math.min(240, Math.max(180, w * 0.34))),
+      spec: () => { const g = get(); return { x: { min: g.range[0], max: g.range[1], log: true }, yL: { min: -g.Y, max: g.Y }, pad: { r: 58, t: 12 }, small: true }; },
+      head: () => `<span class="ax">${md(T('Sum minus integral, in % of the integral', 'Summe minus Integral, in % des Integrals'))}</span><span></span>`,
+      foot: () => `<span class="note">${md(T('Lines: exact class contents ($N \\to \\infty$). Rings: your sample.', 'Linien: exakte Klasseninhalte ($N \\to \\infty$). Ringe: Ihre Stichprobe.'))}</span><span>${K('\\Delta x\\;/\\;' + UT)}</span>`,
+      aria: () => T('Difference between sum and integral against the class width', 'Unterschied zwischen Summe und Integral über der Klassenbreite'),
+      draw: (F) => drawConv(F, get()),
+    });
+  }
+  function convGet(s, V) {
+    const r = s.r, conv = convergence(s.shape, r), I = V.I, Sm = sumStats(V.hist, r);
+    const lines = [{ key: 'x1', r: r, svg: 'x' + sx('1,' + r) }, { key: 's', r: r, dash: true, svg: 's' + sx(r) }];
+    if (r !== 2) lines.push({ key: 'x12', r: 2, svg: 'x' + sx('1,2') });
+    let m = 0;
+    conv.forEach((p) => lines.forEach((L) => { m = Math.max(m, Math.abs(p[L.key])); }));
+    return { conv: conv, lines: lines, dx: V.C.dx, range: SHAPES[s.shape].dxr, Y: Math.min(100, Math.max(1, niceMax(m))),
+      sample: { x1: rel(Sm.x1, I.x1), s: rel(Sm.s, I.s), x12: rel(Sm.x12, I.x12) } };
+  }
+
+  /* ---------- texts ---------- */
+  function readoutText(s, V) {
+    const r = s.r, C = V.C, hs = V.hist;
+    const base = T(`${nfmt(s.N)} ${V.cnt || r === 0 ? 'particles' : 'draws from $q_' + r + '$'} in ${C.n} ${C.n === 1 ? 'class' : 'classes'} of $\\Delta x$ = ${dxs(C.dx)}.`,
+      `${nfmt(s.N)} ${V.cnt || r === 0 ? 'Partikel' : 'Ziehungen aus $q_' + r + '$'} in ${C.n} ${C.n === 1 ? 'Klasse' : 'Klassen'} mit $\\Delta x$ = ${dxs(C.dx)}.`);
+    if (V.cnt) {
+      const x50 = V.I.x50, xs = samples(s.shape, 0, s.seed);
+      let big = 0;
+      for (let k = 0; k < s.N; k++) if (xs[k] > x50) big++;
+      return base + ' ' + T(`Half of $q_${r}$ lies above $x_{50,${r}}$ = ${num(x50)}, and only ${nfmt(big)} of the ${nfmt(s.N)} particles ${big === 1 ? 'is' : 'are'} that large: ${big === 1 ? 'that one sets' : 'those few set'} the right half of the histogram.`,
+        `Die Hälfte von $q_${r}$ liegt oberhalb von $x_{50,${r}}$ = ${num(x50)}, und nur ${nfmt(big)} der ${nfmt(s.N)} Partikel ${big === 1 ? 'ist' : 'sind'} so groß: ${big === 1 ? 'Dieses eine bestimmt' : 'Diese wenigen bestimmen'} die rechte Hälfte des Histogramms.`);
+    }
+    const full = Math.max.apply(null, hs.cnt), sc = 100 / Math.sqrt(Math.max(1, full));
+    return base + ' ' + T(`The fullest class holds ${nfmt(full)}, so its bar scatters by about $1/\\sqrt{${full}}$ ≈ ${sig(sc, 2)} %.`,
+      `Die vollste Klasse enthält ${nfmt(full)}, ihr Balken streut also um etwa $1/\\sqrt{${full}}$ ≈ ${sig(sc, 2)} %.`);
+  }
+  // which error dominates: class width or sample size
+  function errorNote(s, V) {
+    const r = s.r, I = V.I, E = sumStats(V.exact, r), Sm = sumStats(V.hist, r), keys = r === 2 ? ['x1', 's'] : ['x1', 's', 'x12'];
+    const cls = Math.max.apply(null, keys.map((k) => Math.abs(rel(E[k], I[k])))), smp = Math.max.apply(null, keys.map((k) => Math.abs(rel(Sm[k], E[k]))));
+    if (cls < 0.5 && smp < 0.5) return T('Both errors are below 0.5 %: for these means the table is as good as the curve.', 'Beide Fehler liegen unter 0.5 %: Für diese Mittelwerte ist die Tabelle so gut wie die Kurve.');
+    if (smp > cls) return T(`Here the sample is the larger error (up to ${sig(smp, 2)} %): more particles help more than narrower classes.`, `Hier ist die Stichprobe der größere Fehler (bis ${sig(smp, 2)} %): Mehr Partikel helfen mehr als schmalere Klassen.`);
+    return T(`Here the class width is the larger error (up to ${sig(cls, 2)} %): narrower classes help more than more particles.`, `Hier ist die Klassenbreite der größere Fehler (bis ${sig(cls, 2)} %): Schmalere Klassen helfen mehr als mehr Partikel.`);
+  }
+  const FORMS = () => [
+    `q_r(\\bar x_i) = \\frac{\\Delta Q_{r,i}}{\\Delta x_i} \\;\\xrightarrow{\\;\\Delta x \\to 0\\;}\\; q_r(x) = \\frac{\\mathrm{d}Q_r}{\\mathrm{d}x}`,
+    `Q_r(x_i) = \\sum_{j < i} q_r(\\bar x_j)\\,\\Delta x_j \\;\\xrightarrow{\\;\\Delta x \\to 0\\;}\\; Q_r(x) = \\int_{x_\\mathrm{min}}^{x} q_r(x')\\,\\mathrm{d}x'`,
+    `M_{k,r} = \\sum_i \\bar x_i^{\\,k}\\, q_r(\\bar x_i)\\,\\Delta x_i \\;\\xrightarrow{\\;\\Delta x \\to 0\\;}\\; M_{k,r} = \\int x^k\\, q_r(x)\\,\\mathrm{d}x`];
+  function shapeFormulas(shape, r) {
+    const out = [], l = SHAPES[shape].l, c = dists(shape)[r];
+    const f = (tex) => out.push(fp(tex)), p = (txt, cls) => out.push(`<p class="note${cls ? ' ' + cls : ''}">${md(txt)}</p>`);
+    if (shape === 'tri') {
+      p(T('A triangle from 2 to 26 µm with its peak at 6 µm ($x$ in µm, $q_0$ in µm⁻¹):', 'Ein Dreieck von 2 bis 26 µm mit der Spitze bei 6 µm ($x$ in µm, $q_0$ in µm⁻¹):'));
+      f('q_0(x) = \\begin{cases} (x-2)/48 & 2 \\le x \\le 6 \\\\ (26-x)/240 & 6 \\le x \\le 26 \\end{cases}');
+      f('Q_0(x) = \\begin{cases} (x-2)^2/96 & 2 \\le x \\le 6 \\\\ 1-(26-x)^2/480 & 6 \\le x \\le 26 \\end{cases}');
+      p(T('Each flank of $q_0$ is a straight line, so $Q_0$ is a parabola there: $Q_0$ is the area under $q_0$ from the left, and $q_0$ is the slope of $Q_0$.', 'Jede Flanke von $q_0$ ist eine Gerade, $Q_0$ ist dort eine Parabel: $Q_0$ ist die Fläche unter $q_0$ von links, $q_0$ die Steigung von $Q_0$.'));
+    } else if (shape === 'pl') {
+      const d = dists('pl')[0], xs = [2, 6, 10, 16, 26];
+      p(T('$q_0$ runs straight between five corner points:', '$q_0$ verläuft gerade zwischen fünf Eckpunkten:'));
+      out.push(`<div class="tablewrap">${tableHTML(['j', K('x_j\\;/\\;' + UT), K('q_0(x_j)\\;/\\;' + UT + '^{-1}'), K('Q_0(x_j)')], xs.map((x, j) => [String(j), String(x), tnum(QMath.qCont(d, x)), fix(QMath.QCont(d, x), 3)])).replace('class="dt"', 'class="dt res small"')}</div>`);
+      f('q_0(x) = q_0(x_j) + b_j\\,(x - x_j),\\qquad b_j = \\frac{q_0(x_{j+1}) - q_0(x_j)}{x_{j+1} - x_j}');
+      f('Q_0(x) = Q_0(x_j) + q_0(x_j)\\,(x - x_j) + \\tfrac{1}{2}\\,b_j\\,(x - x_j)^2');
+      p(T('Between corners the area under $q_0$ is a trapezoid, so $Q_0$ grows by a straight part and a square part.', 'Zwischen den Ecken ist die Fläche unter $q_0$ ein Trapez, $Q_0$ wächst also um einen linearen und einen quadratischen Teil.'));
+    } else if (shape === 'two') {
+      p(T('Two triangles, A from 2 to 12 µm (peak 7) and B from 14 to 26 µm (peak 20), mixed 60 : 40 by number:', 'Zwei Dreiecke, A von 2 bis 12 µm (Spitze 7) und B von 14 bis 26 µm (Spitze 20), nach Anzahl 60 : 40 gemischt:'));
+      f('q_0(x) = 0.6\\,q_A(x) + 0.4\\,q_B(x),\\qquad Q_0(x) = 0.6\\,Q_A(x) + 0.4\\,Q_B(x)');
+      f('q_A(x) = \\frac{2}{b-a}\\cdot\\begin{cases} \\frac{x-a}{c-a} & a \\le x \\le c \\\\ \\frac{b-x}{b-c} & c \\le x \\le b \\end{cases}');
+      p(T('Between 12 and 14 µm both are zero: no particles, so $Q_0$ stays flat at 0.6.', 'Zwischen 12 und 14 µm sind beide null: keine Partikel, $Q_0$ bleibt flach bei 0.6.'));
+    } else {
+      f('Q_3(x) = \\frac{x - x_\\mathrm{min}}{x_\\mathrm{max} - x_\\mathrm{min}},\\qquad q_3(x) = \\frac{\\mathrm{d}Q_3}{\\mathrm{d}x} = \\frac{1}{x_\\mathrm{max} - x_\\mathrm{min}}');
+      const closed = ['Q_0(x) = \\frac{x_\\mathrm{min}^{-2} - x^{-2}}{x_\\mathrm{min}^{-2} - x_\\mathrm{max}^{-2}}', 'Q_1(x) = \\frac{x_\\mathrm{min}^{-1} - x^{-1}}{x_\\mathrm{min}^{-1} - x_\\mathrm{max}^{-1}}', 'Q_2(x) = \\frac{\\ln(x/x_\\mathrm{min})}{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}'];
+      if (r < 3) { p(T(`Converted to $r = ${r}$ (the area under $q_${r}$ from $x_\\mathrm{min}$):`, `Umgerechnet auf $r = ${r}$ (die Fläche unter $q_${r}$ ab $x_\\mathrm{min}$):`)); f(closed[r]); }
+      p(T('The card "Fly ash, step by step" works through it.', 'Die Karte „Flugasche Schritt für Schritt“ rechnet es durch.'));
+    }
+    if (r !== l) {
+      const k = r - l, M = QMath.momentCont(dists(shape)[l], k), uk = k === 1 ? UT : UT + '^{' + k + '}';
+      p(T(`Shown with the weighting $r = ${r}$: multiply by $x^{${k}}$ and divide by the moment, so the area stays 1:`, `Gezeigt mit der Gewichtung $r = ${r}$: mit $x^{${k}}$ multiplizieren und durch das Moment teilen, damit die Fläche 1 bleibt:`));
+      f(`q_${r}(x) = \\frac{x^{${k}}\\,q_${l}(x)}{M_{${k},${l}}},\\qquad M_{${k},${l}} = ${tnum(M)}\\ ${uk}`);
+    }
+    void c;
+    return out.join('');
+  }
+
+  /* ---------- fly ash, step by step (Play, shape = fly) ---------- */
+  const FLYSTEPS = () => {
+    const I2 = intStats('fly', 2), M13 = QMath.momentCont(dists('fly')[3], -1);
+    return [
+      { r: 3, Q: true, t: T('**Given:** the mass distribution of a fly ash rises linearly from $x_\\mathrm{min}$ = 1 µm to $x_\\mathrm{max}$ = 100 µm (solid line): $$Q_3(x) = \\frac{x - x_\\mathrm{min}}{x_\\mathrm{max} - x_\\mathrm{min}}$$ Equal size ranges hold equal mass.',
+        '**Gegeben:** Die Massenverteilung einer Flugasche steigt linear von $x_\\mathrm{min}$ = 1 µm bis $x_\\mathrm{max}$ = 100 µm (durchgezogene Linie): $$Q_3(x) = \\frac{x - x_\\mathrm{min}}{x_\\mathrm{max} - x_\\mathrm{min}}$$ Gleich breite Größenbereiche enthalten gleich viel Masse.') },
+      { r: 3, Q: true, t: T('**Density:** the slope of $Q_3$ (dashed line), constant from 1 to 100 µm: $$q_3(x) = \\frac{\\mathrm{d}Q_3}{\\mathrm{d}x} = \\frac{1}{x_\\mathrm{max} - x_\\mathrm{min}} = \\frac{1}{99\\ \\mu\\mathrm{m}} = 0.0101\\ \\mu\\mathrm{m}^{-1}$$',
+        '**Dichte:** die Steigung von $Q_3$ (gestrichelt), konstant von 1 bis 100 µm: $$q_3(x) = \\frac{\\mathrm{d}Q_3}{\\mathrm{d}x} = \\frac{1}{x_\\mathrm{max} - x_\\mathrm{min}} = \\frac{1}{99\\ \\mu\\mathrm{m}} = 0.0101\\ \\mu\\mathrm{m}^{-1}$$') },
+      { r: 2, Q: false, t: T(`**Change of weighting to area:** divide by one power of $x$ and renormalise: $$q_2(x) = \\frac{x^{-1}\\,q_3(x)}{M_{-1,3}}$$ $$M_{-1,3} = \\int_{x_\\mathrm{min}}^{x_\\mathrm{max}} \\frac{q_3}{x}\\,\\mathrm{d}x$$ $$= \\frac{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}{x_\\mathrm{max} - x_\\mathrm{min}} = ${tnum(M13)}\\ \\mu\\mathrm{m}^{-1}$$ so $q_2(x) = 1/(x \\ln 100)$: the fine particles now carry most of the weight.`,
+        `**Wechsel der Gewichtung zur Fläche:** durch eine Potenz von $x$ teilen und neu normieren: $$q_2(x) = \\frac{x^{-1}\\,q_3(x)}{M_{-1,3}}$$ $$M_{-1,3} = \\int_{x_\\mathrm{min}}^{x_\\mathrm{max}} \\frac{q_3}{x}\\,\\mathrm{d}x$$ $$= \\frac{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}{x_\\mathrm{max} - x_\\mathrm{min}} = ${tnum(M13)}\\ \\mu\\mathrm{m}^{-1}$$ also $q_2(x) = 1/(x \\ln 100)$: Jetzt tragen die feinen Partikel das meiste Gewicht.`) },
+      { r: 2, Q: true, t: T(`**Cumulative:** $$Q_2(x) = \\int_{x_\\mathrm{min}}^{x} q_2\\,\\mathrm{d}x' = \\frac{\\ln(x/x_\\mathrm{min})}{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}$$ $Q_2$ is logarithmic in $x$: every factor of 10 in size adds 0.5. So $x_{50,2} = \\sqrt{x_\\mathrm{min}\\,x_\\mathrm{max}}$ = ${num(I2.x50)}.`,
+        `**Verteilungssumme:** $$Q_2(x) = \\int_{x_\\mathrm{min}}^{x} q_2\\,\\mathrm{d}x' = \\frac{\\ln(x/x_\\mathrm{min})}{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}$$ $Q_2$ ist logarithmisch in $x$: Jeder Faktor 10 in der Größe bringt 0.5 dazu. Also $x_{50,2} = \\sqrt{x_\\mathrm{min}\\,x_\\mathrm{max}}$ = ${num(I2.x50)}.`) },
+      { r: 3, Q: false, last: true, t: () => {
+        const C = classes('fly', st.dx), e = sumStats(QMath.discretise(dists('fly')[3], C.lim), 3), x12 = 1 / M13;
+        return T(`**Sauter diameter:** $$x_{1,2} = \\frac{1}{M_{-1,3}} = \\frac{99\\ \\mu\\mathrm{m}}{\\ln 100} = ${tnum(x12)}\\ \\mu\\mathrm{m}$$ From ${C.n} classes of $\\Delta x$ = ${dxs(C.dx)} the sum $1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$ gives ${num(e.x12)} (${pct(rel(e.x12, x12))}): $1/x$ is steepest at the fine end, where a wide first class averages it badly. Narrow the classes and watch the gap close in the table.`,
+          `**Sauterdurchmesser:** $$x_{1,2} = \\frac{1}{M_{-1,3}} = \\frac{99\\ \\mu\\mathrm{m}}{\\ln 100} = ${tnum(x12)}\\ \\mu\\mathrm{m}$$ Aus ${C.n} Klassen mit $\\Delta x$ = ${dxs(C.dx)} ergibt die Summe $1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$ den Wert ${num(e.x12)} (${pct(rel(e.x12, x12))}): $1/x$ ist am feinen Ende am steilsten, und eine breite erste Klasse mittelt dort schlecht. Machen Sie die Klassen schmaler und sehen Sie in der Tabelle, wie sich die Lücke schließt.`);
+      } },
+    ];
+  };
+
+  /* ---------- Look ---------- */
+  const LOOK = () => [
+    { N: 50, dx: 2, t: T('The dashed curve is the number density $q_0(x)$ of a powder: what an endless sample would give. A real sample is finite. Here $N$ = 50 particles were picked at random and sorted into classes of $\\Delta x$ = 2 µm. Each bar is $$q_0(\\bar x_i) = \\frac{\\Delta Q_{0,i}}{\\Delta x_i}$$ the share of the particles in the class divided by its width. The bars scatter around the curve.',
+      'Die gestrichelte Kurve ist die Anzahldichte $q_0(x)$ eines Pulvers: Das würde eine unendlich große Stichprobe ergeben. Eine echte Stichprobe ist endlich. Hier wurden $N$ = 50 Partikel zufällig gezogen und in Klassen mit $\\Delta x$ = 2 µm sortiert. Jeder Balken ist $$q_0(\\bar x_i) = \\frac{\\Delta Q_{0,i}}{\\Delta x_i}$$ der Anteil der Partikel in der Klasse geteilt durch ihre Breite. Die Balken streuen um die Kurve.') },
+    { N: NMAX, from: 50, dx: 2, t: T('**More particles.** As $N$ grows to 100 000, every class fills up and the bars settle onto the curve. A class that holds $n$ particles scatters by about $1/\\sqrt n$: 100 particles give 10 %, 10 000 give 1 %.',
+      '**Mehr Partikel.** Wenn $N$ auf 100 000 wächst, füllt sich jede Klasse und die Balken legen sich auf die Kurve. Eine Klasse mit $n$ Partikeln streut um etwa $1/\\sqrt n$: 100 Partikel ergeben 10 %, 10 000 ergeben 1 %.') },
+    { N: NMAX, dx: 8, t: T('**Wide classes.** With $\\Delta x$ = 8 µm the bars are steady, but each is flat over its class: the dip between the main peak and the shoulder has gone. A histogram cannot show detail finer than $\\Delta x$, however many particles it holds.',
+      '**Breite Klassen.** Mit $\\Delta x$ = 8 µm sind die Balken ruhig, aber jeder ist über seine Klasse flach: Die Senke zwischen Hauptspitze und Schulter ist verschwunden. Ein Histogramm kann nichts zeigen, was feiner ist als $\\Delta x$, wie viele Partikel es auch enthält.') },
+    { N: 50, dx: 0.5, t: T('**Narrow classes, few particles.** With $\\Delta x$ = 0.5 µm and $N$ = 50, most classes hold no particle or one. Narrow classes only help when there are enough particles to fill them.',
+      '**Schmale Klassen, wenige Partikel.** Mit $\\Delta x$ = 0.5 µm und $N$ = 50 enthalten die meisten Klassen kein oder ein Partikel. Schmale Klassen helfen nur, wenn genug Partikel da sind, um sie zu füllen.') },
+    { N: NMAX, from: 50, dx: 0.5, t: T('**Both together.** With $N$ = 100 000 and $\\Delta x$ = 0.5 µm the histogram becomes the curve. In the limit the class share per width turns into the slope of $Q_0$: $$q_0(x) = \\lim_{\\Delta x \\to 0} \\frac{\\Delta Q_0}{\\Delta x} = \\frac{\\mathrm{d}Q_0}{\\mathrm{d}x}$$',
+      '**Beides zusammen.** Mit $N$ = 100 000 und $\\Delta x$ = 0.5 µm wird das Histogramm zur Kurve. Im Grenzfall wird aus dem Klassenanteil pro Breite die Steigung von $Q_0$: $$q_0(x) = \\lim_{\\Delta x \\to 0} \\frac{\\Delta Q_0}{\\Delta x} = \\frac{\\mathrm{d}Q_0}{\\mathrm{d}x}$$') },
+    { N: NMAX, dx: 2, exact: true, table: true, t: T('**Sums become integrals.** From a table every moment is a sum over the classes, $$M_{k,r} \\approx \\sum_i \\bar x_i^{\\,k}\\,q_r(\\bar x_i)\\,\\Delta x_i$$ and from the curve it is an integral, $$M_{k,r} = \\int x^k\\,q_r(x)\\,\\mathrm{d}x$$ The table under the plot uses the exact class contents (black outline), so only the class width matters. The mean $x_{1,0}$ is right almost at once; $s_0$ and $x_{1,2}$, which need $x^2$ and $x^3$, want narrower classes.',
+      '**Summen werden zu Integralen.** Aus einer Tabelle ist jedes Moment eine Summe über die Klassen, $$M_{k,r} \\approx \\sum_i \\bar x_i^{\\,k}\\,q_r(\\bar x_i)\\,\\Delta x_i$$ aus der Kurve ein Integral, $$M_{k,r} = \\int x^k\\,q_r(x)\\,\\mathrm{d}x$$ Die Tabelle unter dem Diagramm verwendet die exakten Klasseninhalte (schwarzer Umriss), es zählt also nur die Klassenbreite. Der Mittelwert $x_{1,0}$ stimmt fast sofort; $s_0$ und $x_{1,2}$, die $x^2$ und $x^3$ brauchen, verlangen schmalere Klassen.') },
+    { N: 1000, dx: 2, play: true, t: T('Your turn: in **Play** you set $N$ and $\\Delta x$ yourself, see every moment as a sum and as an integral, find out which error is larger, and work through the fly ash example step by step.',
+      'Jetzt Sie: Unter **Ausprobieren** stellen Sie $N$ und $\\Delta x$ selbst ein, sehen jedes Moment als Summe und als Integral, finden heraus, welcher Fehler größer ist, und rechnen das Flugasche-Beispiel Schritt für Schritt durch.') },
+  ];
+  function lookTable() {
+    const I = intStats('pl', 0), rows = [8, 4, 2, 1, 0.5].map((dx) => {
+      const e = sumStats(QMath.discretise(dists('pl')[0], classes('pl', dx).lim), 0);
+      return [String(dx), tnum(e.x1) + ' <span class="diff">' + pct(rel(e.x1, I.x1)) + '</span>', tnum(e.s) + ' <span class="diff">' + pct(rel(e.s, I.s)) + '</span>', tnum(e.x12) + ' <span class="diff">' + pct(rel(e.x12, I.x12)) + '</span>'];
+    });
+    rows.push([T('integral', 'Integral'), tnum(I.x1), tnum(I.s), tnum(I.x12)]);
+    return tableHTML([K('\\Delta x\\;/\\;' + UT), K('x_{1,0}\\;/\\;' + UT), K('s_0\\;/\\;' + UT), K('x_{1,2}\\;/\\;' + UT)], rows).replace('class="dt"', 'class="dt res conv4"');
+  }
+  function mountLook(root) {
+    const ls = Object.assign(defaults(), { shape: 'pl', r: 0, seed: 3 });
+    let step = 0, anim = 0;
+    const steps = LOOK();
+    const left = h('div', { class: 'col' }), right = h('div', { class: 'col' });
+    root.appendChild(h('div', { class: 'grid' }, [left, right]));
+    const gl = () => { const V = view(ls); return { r: 0, c: V.c, hist: steps[step].table ? null : V.hist, exact: steps[step].exact ? V.exact : null, curve: true, xr: V.xr, top: V.top }; };
+    const P = histPlot(gl);
+    const ro = h('div', { class: 'readout' }), tbl = h('div', { class: 'tablewrap' });
+    left.appendChild(card(null, [P.el, ro, tbl]));
+    const stepCard = h('section', { class: 'card steps' });
+    right.appendChild(stepCard);
+    const draw = () => { P.render(); ro.innerHTML = steps[step].table ? md(T('Exact class contents of $q_0$ in classes of $\\Delta x$ = 2 µm.', 'Exakte Klasseninhalte von $q_0$ in Klassen mit $\\Delta x$ = 2 µm.')) : md(readoutText(ls, view(ls))); };
+    function animateN(from, to) {
+      cancelAnimationFrame(anim);
+      if (reduced() || from === to) { ls.N = to; draw(); return; }
+      const t0 = performance.now(), dur = 1800;
+      const tick = (t) => {
+        if (!P.el.isConnected) return;
+        const f = Math.min(1, (t - t0) / dur);
+        ls.N = Math.round(from * Math.pow(to / from, f)); draw();
+        if (f < 1) anim = requestAnimationFrame(tick);
+      };
+      ls.N = from; draw();
+      anim = requestAnimationFrame(tick);
+    }
+    function paint() {
+      const sp = steps[step];
+      ls.dx = sp.dx;
+      stepCard.innerHTML = '';
+      stepCard.appendChild(h('h2', { text: T('Look', 'Schauen') }));
+      stepCard.appendChild(h('div', { class: 'stepnum', text: T(`Step ${step + 1} of ${steps.length}`, `Schritt ${step + 1} von ${steps.length}`) }));
+      stepCard.appendChild(h('div', { class: 'dots' }, steps.map((x, i) => h('span', { class: i === step ? 'on' : null }))));
+      stepCard.appendChild(h('div', { class: 'text', html: md(sp.t) }));
+      stepCard.appendChild(h('div', { class: 'nav' }, [
+        h('button', { type: 'button', class: 'btn', text: T('Back', 'Zurück'), disabled: step === 0 ? true : null, onclick: () => { step--; paint(); } }),
+        sp.play ? h('button', { type: 'button', class: 'btn primary', text: T('Go to Play', 'Zu Ausprobieren'), onclick: () => App.setMode('04', 'play') })
+          : h('button', { type: 'button', class: 'btn primary', text: T('Next', 'Weiter'), onclick: () => { step++; paint(); } })]));
+      tbl.innerHTML = sp.table ? lookTable() : '';
+      if (sp.from) animateN(sp.from, sp.N);
+      else { cancelAnimationFrame(anim); ls.N = sp.N; draw(); }
+    }
+    paint();
+  }
+
+  /* ---------- Play ---------- */
+  function defaults() {
+    return { preset: 'shoulder', shape: 'pl', r: 0, N: 1000, dx: 2, seed: 1, curve: true, exact: false, showQ: false, count: false, fstep: 0 };
+  }
+  let st = defaults();
+  let settingsHost = null, plot = null, conv = null, readoutEl = null, mountRoot = null, tableHost = null, formHost = null, flyHost = null;
+  const PRESETS = () => [
+    { id: 'shoulder', label: T('A hump with a shoulder', 'Eine Spitze mit Schulter') },
+    { id: 'few', label: md(T('Few particles: $N$ = 30', 'Wenige Partikel: $N$ = 30')) },
+    { id: 'coarse', label: T('Wide classes hide the shoulder', 'Breite Klassen verstecken die Schulter') },
+    { id: 'two', label: T('Two humps', 'Zwei Spitzen') },
+    { id: 'fly', label: md(T('Fly ash, step by step: $Q_3$ to $q_3$, $q_2$ and $Q_2$', 'Flugasche Schritt für Schritt: $Q_3$ zu $q_3$, $q_2$ und $Q_2$')) },
+    { id: 'count', label: T('Counting particles for a mass distribution', 'Partikel zählen für eine Massenverteilung') },
+  ];
+  function applyPreset(id) {
+    st = defaults(); st.preset = id;
+    if (id === 'few') { st.N = 30; }
+    if (id === 'coarse') { st.N = NMAX; st.dx = 8; }
+    if (id === 'two') { st.shape = 'two'; st.N = 5000; st.dx = 1; }
+    if (id === 'fly') { st.shape = 'fly'; st.r = 3; st.N = NMAX; st.dx = 9.9; st.showQ = true; st.fstep = 0; }
+    if (id === 'count') { st.shape = 'fly'; st.r = 3; st.N = 10000; st.dx = 4.95; st.count = true; }
+    st.dx = snapDx(st.shape, st.dx);
+    remount();
+  }
+  const plotGet = () => { const V = view(st); return { r: st.r, c: V.c, hist: V.hist, exact: st.exact ? V.exact : null, curve: st.curve, showQ: st.showQ, xr: V.xr, top: V.top }; };
+  let sN = null, sDx = null;
+  function paintSettings() {
+    if (!settingsHost) return;
+    const S = SHAPES[st.shape];
+    settingsHost.innerHTML = '';
+    settingsHost.appendChild(h('h2', { text: T('Preset experiments', 'Vorbereitete Experimente') }));
+    settingsHost.appendChild(presetBox(PRESETS(), applyPreset, st.preset));
+    settingsHost.appendChild(h('h2', { text: T('Parameters', 'Parameter') }));
+    settingsHost.appendChild(param(T('Distribution', 'Verteilung'), dd([
+      { v: 'pl', label: T('A hump with a shoulder (piecewise linear q₀)', 'Spitze mit Schulter (stückweise lineares q₀)') },
+      { v: 'tri', label: T('Triangle (q₀)', 'Dreieck (q₀)') },
+      { v: 'two', label: T('Two triangles (bimodal q₀)', 'Zwei Dreiecke (bimodales q₀)') },
+      { v: 'fly', label: T('Fly ash: Q₃ linear from 1 to 100 µm', 'Flugasche: Q₃ linear von 1 bis 100 µm') }], st.shape,
+    (v) => { st.shape = v; st.preset = null; st.r = SHAPES[v].l; st.dx = snapDx(v, SHAPES[v].dx0); st.count = false; st.fstep = 0; remount(); }, T('Distribution', 'Verteilung'))));
+    settingsHost.appendChild(param(md(T('Weighting shown $r$', 'Gezeigte Gewichtung $r$')), dd(rOptions(), String(st.r), (v) => { st.r = +v; st.preset = null; refresh(); }, 'r')));
+    sN = slider({ label: md(T('Sample size $N$', 'Stichprobenumfang $N$')), labelText: 'N', min: 10, max: NMAX, log: true, logStep: 0.1, value: st.N, digits: 0, format: (v) => nfmt(v),
+      onInput: (v) => { st.N = Math.round(v); st.preset = null; refresh('noSettings'); } });
+    settingsHost.appendChild(sN);
+    sDx = slider({ label: md(T('Class width $\\Delta x$', 'Klassenbreite $\\Delta x$')), labelText: 'Δx', min: S.dxr[0], max: S.dxr[1], log: true, logStep: 0.06, value: st.dx, unit: U, digits: 'sig',
+      onInput: (v) => { const d = snapDx(st.shape, v); st.dx = d; st.preset = null; if (Math.abs(d - v) > 1e-9) sDx.set(d); refresh('noSettings'); } });
+    settingsHost.appendChild(sDx);
+    settingsHost.appendChild(h('p', { class: 'note', html: md(T(`$\\Delta x$ snaps to equal classes that fill ${SHAPES[st.shape].l === 3 ? '1 to 100' : '2 to 26'} µm exactly.`, `$\\Delta x$ rastet auf gleich breite Klassen ein, die ${SHAPES[st.shape].l === 3 ? '1 bis 100' : '2 bis 26'} µm genau füllen.`)) }));
+    settingsHost.appendChild(h('button', { type: 'button', class: 'btn', text: T('New sample', 'Neue Stichprobe'), onclick: () => { st.seed++; refresh('noSettings'); } }));
+    const togs = [
+      tog(T('Continuous curve', 'Stetige Kurve'), st.curve, (v) => { st.curve = v; refresh('noSettings'); }),
+      tog(md(T('Exact classes ($N \\to \\infty$)', 'Exakte Klassen ($N \\to \\infty$)')), st.exact, (v) => { st.exact = v; refresh('noSettings'); }),
+      tog(md(T('Show $Q_r$', '$Q_r$ zeigen')), st.showQ, (v) => { st.showQ = v; refresh('noSettings'); })];
+    if (st.r > 0) togs.push(tog(md(T(`Count particles, weigh by $x^${st.r}$`, `Partikel zählen, mit $x^${st.r}$ gewichten`)), st.count, (v) => { st.count = v; st.preset = null; refresh(); }));
+    settingsHost.appendChild(param(T('Display', 'Anzeige'), h('div', { class: 'togs' }, togs)));
+    if (st.r > 0) settingsHost.appendChild(h('p', { class: 'note', html: md(st.count
+      ? T(`The sample is $N$ particles picked by number; each one adds $x^${st.r}$ to its class. A few large particles carry most of the weight.`, `Die Stichprobe sind $N$ Partikel, nach Anzahl gezogen; jedes trägt $x^${st.r}$ zu seiner Klasse bei. Wenige große Partikel tragen das meiste Gewicht.`)
+      : T(`Each draw picks a size with a probability given by $q_${st.r}$: for $r = 3$ like a random point in the powder's volume, noting the size of the particle it falls in.`, `Jede Ziehung wählt eine Größe mit der Wahrscheinlichkeit nach $q_${st.r}$: für $r = 3$ wie ein zufälliger Punkt im Volumen des Pulvers, der die Größe des getroffenen Partikels notiert.`)) }));
+    settingsHost.appendChild(h('button', { type: 'button', class: 'btn reset', text: T('Return to defaults', 'Auf Standard zurücksetzen'), onclick: () => { st = defaults(); remount(); } }));
+  }
+  function paintTable() {
+    if (!tableHost) return;
+    const V = view(st), r = st.r, I = V.I, E = sumStats(V.exact, r), Sm = sumStats(V.hist, r);
+    const rows = [
+      { lab: `$x_{1,${r}} = M_{1,${r}}$`, k: 'x1', u: U },
+      { lab: `$M_{2,${r}}$`, k: 'M2', u: 'µm²', deep: true },
+      { lab: T('standard deviation', 'Standardabweichung') + ` $s_${r}$`, k: 's', u: U },
+      { lab: T('median', 'Median') + ` $x_{50,${r}}$`, k: 'x50', u: U }];
+    if (r !== 2) rows.push({ lab: T('Sauter diameter', 'Sauterdurchmesser') + ' $x_{1,2}$', k: 'x12', u: U });
+    const cell = (v, ref, u) => `${tnum(v)} ${u} <span class="diff">${pct(rel(v, ref))}</span>`;
+    const head = ['', T('integral', 'Integral'), T('sum, exact classes', 'Summe, exakte Klassen'), T(`sum, your ${nfmt(st.N)}`, `Summe, Ihre ${nfmt(st.N)}`)];
+    const html = `<table class="dt res cmp"><thead><tr>${head.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((row) =>
+      `<tr${row.deep ? ' class="deep"' : ''}><td>${md(row.lab)}</td><td>${tnum(I[row.k])} ${row.u}</td><td>${cell(E[row.k], I[row.k], row.u)}</td><td>${cell(Sm[row.k], I[row.k], row.u)}</td></tr>`).join('')}</tbody></table>`;
+    tableHost.innerHTML = '';
+    tableHost.appendChild(h('div', { class: 'tablewrap' }, h('div', { html: html })));
+    tableHost.appendChild(h('p', { class: 'note', html: md(T('Percentages: difference from the integral.', 'Prozente: Unterschied zum Integral.') + ' ' + errorNote(st, V)) }));
+    tableHost.appendChild(h('div', { class: 'formulas', html:
+      fp('x_{1,r} \\approx \\sum_i \\bar x_i\\,\\Delta Q_{r,i},\\qquad s_r^2 \\approx \\sum_i \\bar x_i^{\\,2}\\,\\Delta Q_{r,i} - x_{1,r}^2') +
+      fp('x_{1,2} = \\frac{M_{3-r,r}}{M_{2-r,r}},\\qquad \\text{e.g.}\\ x_{1,2} = \\frac{1}{M_{-1,3}} \\approx \\frac{1}{\\sum_i \\Delta Q_{3,i}/\\bar x_i}', 'deep') }));
+    if (conv) conv.render();
+  }
+  function paintForms() {
+    if (!formHost) return;
+    formHost.innerHTML = `<div class="formulas">${FORMS().map((f) => fp(f)).join('')}${shapeFormulas(st.shape, st.r)}</div>`;
+  }
+  function paintFly() {
+    if (!flyHost) return;
+    flyHost.innerHTML = '';
+    if (st.shape !== 'fly' || (st.count && st.r > 0)) { flyHost.style.display = 'none'; return; }
+    flyHost.style.display = '';
+    const steps = FLYSTEPS(), i = Math.min(st.fstep, steps.length - 1), sp = steps[i];
+    flyHost.appendChild(h('h2', { text: T('Fly ash, step by step', 'Flugasche Schritt für Schritt') }));
+    flyHost.appendChild(h('div', { class: 'stepnum', text: T(`Step ${i + 1} of ${steps.length}`, `Schritt ${i + 1} von ${steps.length}`) }));
+    flyHost.appendChild(h('div', { class: 'text', html: md(typeof sp.t === 'function' ? sp.t() : sp.t) }));
+    const go = (j) => { st.fstep = j; const s2 = steps[j]; st.r = s2.r; st.showQ = s2.Q; st.count = false; refresh(); };
+    flyHost.appendChild(h('div', { class: 'nav' }, [
+      h('button', { type: 'button', class: 'btn', text: T('Back', 'Zurück'), disabled: i === 0 ? true : null, onclick: () => go(i - 1) }),
+      h('button', { type: 'button', class: 'btn primary', text: sp.last ? T('Start again', 'Von vorn') : T('Next', 'Weiter'), onclick: () => go(sp.last ? 0 : i + 1) })]));
+  }
+  function refresh(parts) {
+    if (plot) plot.render();
+    if (readoutEl) readoutEl.innerHTML = md(readoutText(st, view(st)));
+    paintTable(); paintForms(); paintFly();
+    if (parts !== 'noSettings') paintSettings();
+  }
+  function remount() { if (mountRoot) { mountRoot.innerHTML = ''; mountPlay(mountRoot); } }
+  const TRY = () => [
+    { t: T('Start at $N$ = 30 and raise $N$. From about which $N$ do the bars stop jumping when you press New sample?', 'Beginnen Sie mit $N$ = 30 und erhöhen Sie $N$. Ab etwa welchem $N$ springen die Balken nicht mehr, wenn Sie Neue Stichprobe drücken?'), go: () => applyPreset('few') },
+    { t: T('Wide classes: with $\\Delta x$ = 8 µm, where has the shoulder gone? Narrow the classes until it comes back.', 'Breite Klassen: Wo ist bei $\\Delta x$ = 8 µm die Schulter geblieben? Machen Sie die Klassen schmaler, bis sie wiederkommt.'), go: () => applyPreset('coarse') },
+    { t: T('Set $N$ = 100 and $\\Delta x$ = 0.2 µm. Why does the histogram get worse, not better?', 'Stellen Sie $N$ = 100 und $\\Delta x$ = 0.2 µm ein. Warum wird das Histogramm schlechter statt besser?'), go: () => { applyPreset('shoulder'); st.N = 100; st.dx = snapDx('pl', 0.2); st.preset = null; remount(); } },
+    { t: T('Fly ash with $r = 3$: why is the sum exact for $x_{1,3}$ and $x_{50,3}$, but not for $s_3$ and $x_{1,2}$?', 'Flugasche mit $r = 3$: Warum ist die Summe für $x_{1,3}$ und $x_{50,3}$ exakt, für $s_3$ und $x_{1,2}$ aber nicht?'), go: () => { applyPreset('fly'); st.showQ = false; st.fstep = 4; refresh(); } },
+    { t: T('Find the class width at which $x_{1,2}$ from the classes is within 1 % of the integral.', 'Finden Sie die Klassenbreite, bei der $x_{1,2}$ aus den Klassen weniger als 1 % vom Integral abweicht.'), go: () => { applyPreset('fly'); st.showQ = false; st.fstep = 4; refresh(); } },
+    { t: T('Count particles for the fly ash mass distribution. Why do the coarse bars stay ragged even with 100 000 particles?', 'Zählen Sie Partikel für die Massenverteilung der Flugasche. Warum bleiben die groben Balken selbst mit 100 000 Partikeln unruhig?'), go: () => applyPreset('count') },
+  ];
+  function mountPlay(root) {
+    mountRoot = root;
+    const plotCol = h('div', { class: 'col a-plot' }), restCol = h('div', { class: 'col a-rest' });
+    settingsHost = h('section', { class: 'card settings a-set' });
+    root.appendChild(h('div', { class: 'grid play' }, [plotCol, settingsHost, restCol]));
+    plot = histPlot(plotGet);
+    readoutEl = h('div', { class: 'readout' });
+    plotCol.appendChild(card(null, [plot.el, readoutEl]));
+    flyHost = h('section', { class: 'card steps fly' });
+    restCol.appendChild(flyHost);
+    tableHost = h('div');
+    conv = convPlot(() => convGet(st, view(st)));
+    restCol.appendChild(card(T('Sum and integral side by side', 'Summe und Integral nebeneinander'), [tableHost, conv.el]));
+    formHost = h('div');
+    restCol.appendChild(card(T('Discrete and continuous forms', 'Diskrete und stetige Formen'), [formHost]));
+    restCol.appendChild(card(T('Try this', 'Probieren Sie'), [h('ol', {}, TRY().map((t) => h('li', {}, [h('span', { html: md(t.t) }), h('button', { type: 'button', class: 'btn', text: T('Set up', 'Einstellen'), onclick: t.go })])))], 'try'));
+    if (st.shape === 'fly' && st.preset === 'fly') { const s0 = FLYSTEPS()[st.fstep]; st.r = s0.r; st.showQ = s0.Q; }
+    paintSettings(); paintTable(); paintForms(); paintFly();
+    readoutEl.innerHTML = md(readoutText(st, view(st)));
+    requestAnimationFrame(() => { plot.render(); conv.render(); });
+  }
+
+  /* ---------- Test yourself ---------- */
+  function randDist(rand) {
+    const k = R.pick(rand, ['tri', 'pl', 'two']), a = R.pick(rand, [1, 2]);
+    let d;
+    if (k === 'tri') d = QMath.piecewiseLinear([[a, 0], [a + R.pick(rand, [3, 4, 5]), 1], [a + R.pick(rand, [20, 22, 24]), 0]], 0, U);
+    else if (k === 'pl') d = QMath.piecewiseLinear([[a, 0], [a + 4, 1], [a + 8, R.pick(rand, [0.3, 0.4])], [a + 14, R.pick(rand, [0.5, 0.6])], [a + 24, 0]], 0, U);
+    else d = QMath.mixture(QMath.piecewiseLinear([[a, 0], [a + 5, 1], [a + 10, 0]], 0, U), QMath.piecewiseLinear([[a + 12, 0], [a + 18, 1], [a + 24, 0]], 0, U), R.pick(rand, [0.5, 0.6]));
+    return { d: d, xr: [0, 30] };
+  }
+  function qHist(d, N, dx, rand) {
+    const C = classesOf(d.xmin, d.xmax, dx);
+    return histOf(QMath.sampleCont(d, N, rand), N, C.lim, 0, 0);
+  }
+  const miniHist = (g) => () => { const P = histPlot(() => g, { small: true, maxH: 260, minH: 180, ratio: 0.42 }); requestAnimationFrame(() => P.render()); return P.el; };
+  const flyQ3 = (a, b) => QMath.uniformQ(a, b, 3, U);
+  const GENS = [
+    { id: 'diagnose', calc: false, make: (rand) => {
+      const t = randDist(rand), noisy = rand() < 0.5, N = noisy ? R.pick(rand, [20, 30, 40]) : NMAX, dx = noisy ? R.pick(rand, [0.5, 1]) : R.pick(rand, [6, 8]);
+      const hist = qHist(t.d, N, dx, rand), qm = qmaxOf(t.d);
+      const g = { r: 0, c: t.d, hist: hist, curve: true, xr: t.xr, top: niceMax(Math.min(Math.max(qm, Math.max.apply(null, hist.q)), 2.2 * qm)) };
+      const choices = [
+        { html: T('Too few particles: each class holds only a handful, so the bars scatter.', 'Zu wenige Partikel: Jede Klasse enthält nur eine Handvoll, die Balken streuen.'), correct: noisy,
+          why: noisy ? null : T(`With $N$ = ${nfmt(N)} every class holds thousands of particles, so the bars are steady. Look at how wide they are.`, `Mit $N$ = ${nfmt(N)} enthält jede Klasse Tausende Partikel, die Balken sind ruhig. Achten Sie auf ihre Breite.`) },
+        { html: T('The classes are too wide: each bar is flat over a wide class and hides the shape.', 'Die Klassen sind zu breit: Jeder Balken ist über eine breite Klasse flach und verdeckt die Form.'), correct: !noisy,
+          why: noisy ? T('The classes are already narrow. Narrower ones would hold even fewer particles each.', 'Die Klassen sind schon schmal. Schmalere würden noch weniger Partikel enthalten.') : null },
+        { html: T('Bar heights depend on the class width, so bars can never match $q_0(x)$.', 'Balkenhöhen hängen von der Klassenbreite ab, daher können Balken nie zu $q_0(x)$ passen.'), correct: false,
+          why: T('Dividing by $\\Delta x_i$ makes the height independent of the class width: $q_0(\\bar x_i) = \\Delta Q_{0,i}/\\Delta x_i$.', 'Das Teilen durch $\\Delta x_i$ macht die Höhe unabhängig von der Klassenbreite: $q_0(\\bar x_i) = \\Delta Q_{0,i}/\\Delta x_i$.') },
+        { html: T('The sample comes from a different powder.', 'Die Stichprobe stammt aus einem anderen Pulver.'), correct: false,
+          why: T('The particles were drawn from exactly this $q_0(x)$. The misfit comes from the sample size or the class width.', 'Die Partikel wurden genau aus diesem $q_0(x)$ gezogen. Die Abweichung kommt vom Stichprobenumfang oder der Klassenbreite.') }];
+      return {
+        kind: 'single',
+        text: T(`Bars: a histogram of $N$ = ${nfmt(N)} particles in classes of $\\Delta x$ = ${+hist.dx[0].toPrecision(3)} µm. Dashed: the density $q_0(x)$ of the powder. Why do the bars not follow the curve?`,
+          `Balken: ein Histogramm von $N$ = ${nfmt(N)} Partikeln in Klassen mit $\\Delta x$ = ${+hist.dx[0].toPrecision(3)} µm. Gestrichelt: die Dichte $q_0(x)$ des Pulvers. Warum folgen die Balken nicht der Kurve?`),
+        mini: miniHist(g), choices: R.shuffle(rand, choices),
+        hint: T('Two things limit a histogram: how many particles each class holds (scatter) and how wide the classes are (detail). Which one shows here?', 'Zwei Dinge begrenzen ein Histogramm: wie viele Partikel jede Klasse enthält (Streuung) und wie breit die Klassen sind (Auflösung). Was zeigt sich hier?'),
+        solution: noisy ? T(`With only ${N} particles, a class holds a few at most and scatters by $1/\\sqrt n$, i.e. 30 % to 100 %. More particles would fix it; the classes may stay narrow.`, `Mit nur ${N} Partikeln enthält eine Klasse höchstens einige und streut um $1/\\sqrt n$, also 30 % bis 100 %. Mehr Partikel würden helfen; die Klassen dürfen schmal bleiben.`)
+          : T(`With ${nfmt(N)} particles the bars are steady to about 1 %, but each is flat over ${+hist.dx[0].toPrecision(3)} µm and cannot follow the curve inside its class. Narrower classes would fix it.`, `Mit ${nfmt(N)} Partikeln sind die Balken auf etwa 1 % ruhig, aber jeder ist über ${+hist.dx[0].toPrecision(3)} µm flach und kann der Kurve innerhalb der Klasse nicht folgen. Schmalere Klassen würden helfen.`),
+      };
+    } },
+    { id: 'exact', calc: false, make: (rand) => {
+      const r = R.pick(rand, [0, 2, 3]), a = R.pick(rand, [1, 2, 5]), b = R.pick(rand, [50, 100, 200]), n = R.pick(rand, [4, 5, 10]);
+      const choices = [
+        { html: `$x_{1,${r}} = \\sum_i \\bar x_i\\,\\Delta Q_{${r},i}$`, correct: true },
+        { html: T(`$x_{50,${r}}$, read off $Q_${r}$ drawn straight between the class limits`, `$x_{50,${r}}$, abgelesen an $Q_${r}$, gerade zwischen den Klassengrenzen gezeichnet`), correct: true },
+        { html: `$M_{2,${r}} = \\sum_i \\bar x_i^{\\,2}\\,\\Delta Q_{${r},i}$`, correct: false,
+          why: T('$x^2$ curves upward inside a class, so $\\bar x_i^{\\,2}$ is below the class average of $x^2$: the sum is too small, by $\\Delta x^2/12$.', '$x^2$ krümmt sich innerhalb einer Klasse nach oben, $\\bar x_i^{\\,2}$ liegt unter dem Klassenmittel von $x^2$: Die Summe ist zu klein, um $\\Delta x^2/12$.') },
+        { html: `$M_{-1,${r}} = \\sum_i \\Delta Q_{${r},i}/\\bar x_i$`, correct: false,
+          why: T('$1/x$ curves inside a class, most strongly at the fine end: the sum is too small.', '$1/x$ ist innerhalb einer Klasse gekrümmt, am stärksten am feinen Ende: Die Summe ist zu klein.') }];
+      return {
+        kind: 'multi',
+        text: T(`$q_${r}$ is constant from ${a} to ${b} µm, so $Q_${r}$ rises in a straight line. The range is split into ${n} equal classes, and each result below uses the class means $\\bar x_i$ and the exact class shares $\\Delta Q_{${r},i}$. Which results are exact, whatever the class width?`,
+          `$q_${r}$ ist von ${a} bis ${b} µm konstant, $Q_${r}$ steigt also gerade an. Der Bereich ist in ${n} gleiche Klassen geteilt, und jedes Ergebnis unten verwendet die Klassenmitten $\\bar x_i$ und die exakten Klassenanteile $\\Delta Q_{${r},i}$. Welche Ergebnisse sind exakt, unabhängig von der Klassenbreite?`),
+        choices: R.shuffle(rand, choices),
+        hint: T('The class mean gives the exact class average of a quantity only where that quantity, times $q_r$, is a straight line inside the class.', 'Die Klassenmitte liefert den exakten Klassenmittelwert einer Größe nur, wo diese Größe mal $q_r$ innerhalb der Klasse eine Gerade ist.'),
+        solution: T(`With $q_${r}$ constant, $x\\,q_${r}$ is a straight line in each class, so its integral over the class is exactly $\\bar x_i\\,\\Delta Q_{${r},i}$; and $Q_${r}$ is itself straight, so interpolating between the limits is exact. $x^2$ and $1/x$ curve, so their sums only approach the integrals as $\\Delta x \\to 0$.`,
+          `Mit konstantem $q_${r}$ ist $x\\,q_${r}$ in jeder Klasse eine Gerade, ihr Integral über die Klasse ist genau $\\bar x_i\\,\\Delta Q_{${r},i}$; und $Q_${r}$ ist selbst gerade, die Interpolation zwischen den Grenzen ist exakt. $x^2$ und $1/x$ sind gekrümmt, ihre Summen nähern sich den Integralen erst für $\\Delta x \\to 0$.`),
+      };
+    } },
+    { id: 'sign', calc: false, make: (rand) => {
+      const a = R.pick(rand, [1, 2]), b = R.pick(rand, [50, 100]), n = R.pick(rand, [3, 4, 5]), v = R.pick(rand, ['x12', 's']);
+      const d = flyQ3(a, b), I = contStats(d, 3), E = sumStats(QMath.discretise(d, classesOf(a, b, (b - a) / n).lim), 3);
+      const big = v === 'x12';
+      const what = big ? T('the Sauter diameter $x_{1,2} = 1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$', 'der Sauterdurchmesser $x_{1,2} = 1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$')
+        : T('the standard deviation $s_3$, with every particle placed at its class mean $\\bar x_i$', 'die Standardabweichung $s_3$, mit jedem Partikel an seiner Klassenmitte $\\bar x_i$');
+      const choices = [
+        { html: T('larger than the exact value', 'größer als der exakte Wert'), correct: big, why: big ? null : T('Placing every particle at its class mean removes the spread inside each class.', 'Jedes Partikel an seine Klassenmitte zu setzen entfernt die Streuung innerhalb jeder Klasse.') },
+        { html: T('smaller than the exact value', 'kleiner als der exakte Wert'), correct: !big, why: big ? T('$1/\\bar x_i$ is below the class average of $1/x$, so the sum in the denominator is too small.', '$1/\\bar x_i$ liegt unter dem Klassenmittel von $1/x$, die Summe im Nenner ist also zu klein.') : null },
+        { html: T('exactly the same', 'genau gleich'), correct: false, why: T('Only quantities that are straight lines inside a class come out exact.', 'Exakt sind nur Größen, die innerhalb einer Klasse gerade verlaufen.') },
+        { html: T('That depends on the number of particles $N$.', 'Das hängt von der Partikelzahl $N$ ab.'), correct: false, why: T('No sample is drawn here: the class contents are exact. Only the class width matters.', 'Hier wird keine Stichprobe gezogen: Die Klasseninhalte sind exakt. Nur die Klassenbreite zählt.') }];
+      return {
+        kind: 'single',
+        text: T(`$Q_3$ rises in a straight line from ${a} to ${b} µm ($q_3$ constant). The range is split into only ${n} equal classes with their exact shares $\\Delta Q_{3,i}$. Will ${what} come out larger or smaller than the exact value from the integral?`,
+          `$Q_3$ steigt gerade von ${a} bis ${b} µm an ($q_3$ konstant). Der Bereich ist in nur ${n} gleiche Klassen mit ihren exakten Anteilen $\\Delta Q_{3,i}$ geteilt. Wird ${what} größer oder kleiner als der exakte Wert aus dem Integral?`),
+        choices: choices,
+        hint: big ? T('Sketch $1/x$ over a wide class at the fine end. Is the value at the class mean above or below the average over the class?', 'Skizzieren Sie $1/x$ über eine breite Klasse am feinen Ende. Liegt der Wert in der Klassenmitte über oder unter dem Mittel über die Klasse?')
+          : T('What happens to the spread inside each class when every particle is moved to the class mean?', 'Was passiert mit der Streuung innerhalb jeder Klasse, wenn jedes Partikel in die Klassenmitte rückt?'),
+        solution: big ? T(`$1/x$ curves upward, so $1/\\bar x_i$ is smaller than the class average of $1/x$. The sum $\\sum_i \\Delta Q_{3,i}/\\bar x_i$ is too small and its reciprocal too large: $$x_{1,2} = ${tnum(E.x12)}\\ ${UT}\\ \\text{(classes)}\\quad\\text{vs.}\\quad ${tnum(I.x12)}\\ ${UT}\\ \\text{(integral)}$$`,
+          `$1/x$ krümmt sich nach oben, $1/\\bar x_i$ ist kleiner als das Klassenmittel von $1/x$. Die Summe $\\sum_i \\Delta Q_{3,i}/\\bar x_i$ ist zu klein, ihr Kehrwert zu groß: $$x_{1,2} = ${tnum(E.x12)}\\ ${UT}\\ \\text{(Klassen)}\\quad\\text{gegenüber}\\quad ${tnum(I.x12)}\\ ${UT}\\ \\text{(Integral)}$$`)
+          : T(`Moving every particle to its class mean removes the spread inside the classes, $\\Delta x^2/12$ of the variance for a constant density: $$s_3 = ${tnum(E.s)}\\ ${UT}\\ \\text{(classes)}\\quad\\text{vs.}\\quad ${tnum(I.s)}\\ ${UT}\\ \\text{(integral)}$$`,
+            `Rückt jedes Partikel in seine Klassenmitte, fehlt die Streuung innerhalb der Klassen, bei konstanter Dichte $\\Delta x^2/12$ der Varianz: $$s_3 = ${tnum(E.s)}\\ ${UT}\\ \\text{(Klassen)}\\quad\\text{gegenüber}\\quad ${tnum(I.s)}\\ ${UT}\\ \\text{(Integral)}$$`),
+      };
+    } },
+    { id: 'tallest', calc: false, make: (rand) => {
+      const LIMS = [[0, 2, 4, 8, 16, 32], [0, 5, 10, 20, 40, 60], [1, 2, 3, 5, 10, 20], [0, 10, 20, 30, 50, 100]];
+      let lim, n, best, most;
+      do {
+        lim = R.pick(rand, LIMS); n = lim.slice(1).map(() => R.int(rand, 4, 40) * 5);
+        const dens = n.map((v, i) => v / (lim[i + 1] - lim[i])), sd = dens.slice().sort((p, q) => q - p), sn = n.slice().sort((p, q) => q - p);
+        best = dens.indexOf(sd[0]); most = n.indexOf(sn[0]);
+        if (sd[1] > 0.9 * sd[0] || sn[1] === sn[0]) best = most;
+      } while (best === most);
+      const N = n.reduce((p, q) => p + q, 0), q0 = n.map((v, i) => v / N / (lim[i + 1] - lim[i]));
+      const lab = (i) => `${lim[i]} – ${lim[i + 1]} µm`;
+      return {
+        kind: 'single',
+        text: T(`An image analysis sorted $N$ = ${N} particles into classes of different widths. Which class has the tallest bar in the histogram of $q_0(\\bar x_i)$?`, `Eine Bildanalyse hat $N$ = ${N} Partikel in Klassen verschiedener Breite sortiert. Welche Klasse hat im Histogramm von $q_0(\\bar x_i)$ den höchsten Balken?`),
+        table: tableHTML(['i', T('class', 'Klasse'), K('n_i')], n.map((v, i) => [String(i + 1), lab(i), String(v)])).replace('class="dt"', 'class="dt res small"'),
+        choices: n.map((v, i) => ({ html: lab(i), correct: i === best,
+          why: i === most ? T('This class holds the most particles, but it is also wide: the bar height is $n_i/(N\\,\\Delta x_i)$.', 'Diese Klasse enthält die meisten Partikel, ist aber auch breit: Die Balkenhöhe ist $n_i/(N\\,\\Delta x_i)$.')
+            : T('Compare $n_i/\\Delta x_i$, the particles per µm of class width.', 'Vergleichen Sie $n_i/\\Delta x_i$, die Partikel pro µm Klassenbreite.') })),
+        hint: T('The bar height is a share per width, $q_0(\\bar x_i) = n_i/(N\\,\\Delta x_i)$, not the count.', 'Die Balkenhöhe ist ein Anteil pro Breite, $q_0(\\bar x_i) = n_i/(N\\,\\Delta x_i)$, nicht die Anzahl.'),
+        solution: T('Divide each count by $N$ and by the class width: ', 'Teilen Sie jede Anzahl durch $N$ und durch die Klassenbreite: ') + n.map((v, i) => `${lab(i)}: ${sig(q0[i], 3)} µm⁻¹`).join(', ') + '. ' + T(`The tallest bar is ${lab(best)}.`, `Der höchste Balken ist ${lab(best)}.`),
+      };
+    } },
+    { id: 'statements', calc: false, make: (rand) => {
+      const pool = [
+        { t: T('The more particles a class holds, the less its bar scatters, roughly as $1/\\sqrt n$.', 'Je mehr Partikel eine Klasse enthält, desto weniger streut ihr Balken, etwa wie $1/\\sqrt n$.'), ok: true },
+        { t: T('Narrower classes always bring the histogram closer to the curve.', 'Schmalere Klassen bringen das Histogramm immer näher an die Kurve.'), ok: false, why: T('With few particles, narrow classes are nearly empty and the scatter grows.', 'Bei wenigen Partikeln sind schmale Klassen fast leer, die Streuung wächst.') },
+        { t: T('As $\\Delta x \\to 0$, $\\sum_i \\bar x_i^{\\,k}\\,q_r(\\bar x_i)\\,\\Delta x_i$ approaches $\\int x^k\\,q_r(x)\\,\\mathrm{d}x$.', 'Für $\\Delta x \\to 0$ nähert sich $\\sum_i \\bar x_i^{\\,k}\\,q_r(\\bar x_i)\\,\\Delta x_i$ dem Integral $\\int x^k\\,q_r(x)\\,\\mathrm{d}x$.'), ok: true },
+        { t: T('Doubling the class width doubles the bar heights.', 'Verdoppelt man die Klassenbreite, verdoppeln sich die Balkenhöhen.'), ok: false, why: T('It roughly doubles the bar areas $\\Delta Q_{r,i}$; the height $\\Delta Q_{r,i}/\\Delta x_i$ stays about the same.', 'Es verdoppelt etwa die Balkenflächen $\\Delta Q_{r,i}$; die Höhe $\\Delta Q_{r,i}/\\Delta x_i$ bleibt etwa gleich.') },
+        { t: T('$q_r(x) = \\mathrm{d}Q_r/\\mathrm{d}x$ is the limit of $\\Delta Q_{r,i}/\\Delta x_i$ for $\\Delta x_i \\to 0$.', '$q_r(x) = \\mathrm{d}Q_r/\\mathrm{d}x$ ist der Grenzwert von $\\Delta Q_{r,i}/\\Delta x_i$ für $\\Delta x_i \\to 0$.'), ok: true },
+        { t: T('A histogram of 100 000 particles has no sampling error.', 'Ein Histogramm aus 100 000 Partikeln hat keinen Stichprobenfehler.'), ok: false, why: T('The error is small but not zero, and classes with few particles in them still scatter.', 'Der Fehler ist klein, aber nicht null, und Klassen mit wenigen Partikeln streuen weiterhin.') },
+        { t: T('The bars of a histogram together have the area 1, whatever $N$ and $\\Delta x$.', 'Die Balken eines Histogramms haben zusammen die Fläche 1, unabhängig von $N$ und $\\Delta x$.'), ok: true },
+        { t: T('With a large enough sample, the sum over classes gives the exact mean, however wide the classes.', 'Mit einer ausreichend großen Stichprobe ergibt die Summe über Klassen den exakten Mittelwert, egal wie breit die Klassen sind.'), ok: false, why: T('The class-width error stays for any $N$: only narrower classes remove it.', 'Der Fehler durch die Klassenbreite bleibt für jedes $N$: Nur schmalere Klassen beseitigen ihn.') },
+      ];
+      let pick;
+      do { pick = R.shuffle(rand, pool).slice(0, 4); } while (!pick.some((p) => p.ok) || pick.every((p) => p.ok));
+      return {
+        kind: 'multi',
+        text: T('Which statements are true?', 'Welche Aussagen sind richtig?'),
+        choices: pick.map((p) => ({ html: p.t, correct: p.ok, why: p.ok ? null : p.why })),
+        hint: T('Two separate errors: the sample (shrinks with $N$) and the class width (shrinks with $\\Delta x$).', 'Zwei getrennte Fehler: die Stichprobe (schrumpft mit $N$) und die Klassenbreite (schrumpft mit $\\Delta x$).'),
+        solution: pick.map((p) => (p.ok ? '✓ ' : '✗ ') + p.t + (p.why ? ' ' + p.why : '')).join('<br>'),
+      };
+    } },
+    { id: 'sketchQ2', calc: false, make: () => {
+      const XS = [1, 5, 10, 20, 40, 70, 100], truth = XS.map((x) => Math.log(x) / Math.log(100)), lin = XS.map((x) => (x - 1) / 99);
+      return {
+        kind: 'sketch',
+        text: T('Fly ash: $Q_3$ (red) rises in a straight line from 1 to 100 µm. Drag the points to sketch the area-weighted $Q_2$.', 'Flugasche: $Q_3$ (rot) steigt gerade von 1 bis 100 µm. Ziehen Sie die Punkte, um die flächengewichtete $Q_2$ zu skizzieren.'),
+        plot: (qs) => {
+          if (!qs.pts) qs.pts = XS.map((x, i) => (i === 0 ? 0 : i === XS.length - 1 ? 1 : 0.5));
+          const P = Plot({
+            height: (w) => Math.round(Math.min(320, Math.max(220, w * 0.48))),
+            spec: () => ({ x: { min: 0, max: 100 }, yL: { min: 0, max: 1 }, small: true }),
+            head: () => `<span class="ax r3">${swQ(3)}${K('Q_3')}</span> <span class="ax"><span class="sw" style="border-top-color:var(--accent)"></span>${T('your', 'Ihre')} ${K('Q_2')}${qs.reveal ? ` · <span class="ax r2">${swQ(2)}${K('Q_2')}</span>` : ''}</span>`,
+            foot: () => `<span></span><span>${K('x\\;/\\;' + UT)}</span>`,
+            aria: () => T('Sketch of Q2', 'Skizze von Q2'),
+            draw: (F) => {
+              let s = F.axes();
+              s += `<g class="r3">${polyline([[F.X(1), F.YL(0)], [F.X(100), F.YL(1)]], 'Qline', 'style="opacity:.7"')}</g>`;
+              if (qs.reveal) { const pts = []; for (let i = 0; i <= 200; i++) { const x = Math.pow(100, i / 200); pts.push([F.X(x), F.YL(Math.log(x) / Math.log(100))]); } s += `<g class="r2">${polyline(pts, 'Qline')}</g>`; }
+              s += polyline(XS.map((x, i) => [F.X(x), F.YL(qs.pts[i])]), 'Qline', 'style="stroke:var(--accent)"');
+              XS.forEach((x, i) => { s += `<circle cx="${F.X(x).toFixed(1)}" cy="${F.YL(qs.pts[i]).toFixed(1)}" r="8" data-drag="p${i}" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5;cursor:ns-resize"/>`; });
+              return s;
+            },
+            onDrag: (k, x, p, F) => { const i = +k.slice(1); qs.pts[i] = Math.round(Math.max(0, Math.min(1, F.invYL(p.py))) * 100) / 100; P.render(); },
+          });
+          return P;
+        },
+        gradeSketch: (pts) => {
+          const off = pts.map((v, i) => (Math.abs(v - truth[i]) > 0.07 ? i : -1)).filter((i) => i >= 0);
+          if (!off.length) return { ok: true };
+          if (pts.every((v, i) => Math.abs(v - lin[i]) < 0.07)) return { ok: false, msg: T('That is $Q_3$ again. Weighing by area divides $q_3$ by $x$: the fine particles gain weight, so $Q_2$ rises much faster at first.', 'Das ist wieder $Q_3$. Die Flächengewichtung teilt $q_3$ durch $x$: Die feinen Partikel gewinnen Gewicht, $Q_2$ steigt anfangs viel schneller.') };
+          if (pts.some((v, i) => i > 0 && v < pts[i - 1] - 1e-9)) return { ok: false, msg: T('Your curve falls somewhere: a cumulative distribution never does.', 'Ihre Kurve fällt irgendwo: Eine Verteilungssumme tut das nie.') };
+          return { ok: false, msg: T(`The points at ${off.map((i) => XS[i] + ' µm').join(', ')} are off. $Q_2$ grows by the same step for every factor of 10 in size.`, `Die Punkte bei ${off.map((i) => XS[i] + ' µm').join(', ')} liegen daneben. $Q_2$ wächst für jeden Faktor 10 in der Größe um dieselbe Stufe.`) };
+        },
+        why: T('$Q_2 = \\ln x/\\ln 100$: from 1 to 10 µm it climbs to 0.5, from 10 to 100 µm the other 0.5.', '$Q_2 = \\ln x/\\ln 100$: von 1 bis 10 µm steigt sie auf 0.5, von 10 bis 100 µm um die anderen 0.5.'),
+        hint: T('$q_2 \\propto x^{-1} q_3 \\propto 1/x$, so $Q_2 \\propto \\ln x$: each factor of 10 adds the same step. Where is $Q_2$ = 0.5?', '$q_2 \\propto x^{-1} q_3 \\propto 1/x$, also $Q_2 \\propto \\ln x$: Jeder Faktor 10 bringt dieselbe Stufe. Wo ist $Q_2$ = 0.5?'),
+        solution: T('$$Q_2(x) = \\frac{\\ln(x/1\\ \\mu\\mathrm{m})}{\\ln 100}$$ ', '$$Q_2(x) = \\frac{\\ln(x/1\\ \\mu\\mathrm{m})}{\\ln 100}$$ ') + XS.map((x, i) => `$Q_2$(${x} µm) = ${fix(truth[i], 2)}`).join(', ') + '. ' + T('The true curve is now drawn in orange.', 'Die richtige Kurve ist jetzt orange eingezeichnet.'),
+      };
+    } },
+    { id: 'x1sum', calc: true, make: (rand) => {
+      const a = R.pick(rand, [0, 2, 4]), w = R.pick(rand, [2, 4, 5]), k = R.int(rand, 4, 5), lim = [], n = [];
+      for (let i = 0; i <= k; i++) lim.push(a + i * w);
+      for (let i = 0; i < k; i++) n.push(R.int(rand, 2, 30) * 5);
+      const N = n.reduce((p, q) => p + q, 0), xm = n.map((v, i) => (lim[i] + lim[i + 1]) / 2);
+      const ans = n.reduce((s, v, i) => s + xm[i] * v / N, 0), lower = n.reduce((s, v, i) => s + lim[i] * v / N, 0), upper = n.reduce((s, v, i) => s + lim[i + 1] * v / N, 0);
+      const plain = xm.reduce((p, q) => p + q, 0) / k, noN = ans * N;
+      return {
+        kind: 'number',
+        text: T(`An image analysis counted $N$ = ${N} particles in ${k} classes (table). Compute the arithmetic mean $x_{1,0}$ from the table.`, `Eine Bildanalyse hat $N$ = ${N} Partikel in ${k} Klassen gezählt (Tabelle). Berechnen Sie den arithmetischen Mittelwert $x_{1,0}$ aus der Tabelle.`),
+        table: tableHTML(['i', T('class', 'Klasse') + ' ' + K('x_i') + ' – ' + K('x_{i+1}'), K('n_i')], n.map((v, i) => [String(i + 1), `${lim[i]} – ${lim[i + 1]} µm`, String(v)])).replace('class="dt"', 'class="dt res small"'),
+        label: '$x_{1,0}$ =', unit: U, answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - lower) <= 0.01 * lower, msg: T('You used the lower limits $x_i$. A moment uses the class means $\\bar x_i = (x_i + x_{i+1})/2$.', 'Sie haben die unteren Grenzen $x_i$ verwendet. Ein Moment verwendet die Klassenmitten $\\bar x_i = (x_i + x_{i+1})/2$.') },
+          { test: (v) => Math.abs(v - upper) <= 0.01 * upper, msg: T('You used the upper limits. A moment uses the class means $\\bar x_i = (x_i + x_{i+1})/2$.', 'Sie haben die oberen Grenzen verwendet. Ein Moment verwendet die Klassenmitten $\\bar x_i = (x_i + x_{i+1})/2$.') },
+          { test: (v) => Math.abs(v - plain) <= 0.01 * plain, msg: T('That is the plain average of the class means. Weigh each by its share $\\Delta Q_{0,i} = n_i/N$.', 'Das ist der einfache Mittelwert der Klassenmitten. Gewichten Sie jede mit ihrem Anteil $\\Delta Q_{0,i} = n_i/N$.') },
+          { test: (v) => Math.abs(v - noN) <= 0.01 * noN, msg: T('Divide by $N$: the shares $\\Delta Q_{0,i} = n_i/N$ add up to 1.', 'Teilen Sie durch $N$: Die Anteile $\\Delta Q_{0,i} = n_i/N$ ergeben zusammen 1.') }],
+        hint: T('$x_{1,0} = \\sum_i \\bar x_i\\,\\Delta Q_{0,i}$ with $\\bar x_i = (x_i + x_{i+1})/2$ and $\\Delta Q_{0,i} = n_i/N$.', '$x_{1,0} = \\sum_i \\bar x_i\\,\\Delta Q_{0,i}$ mit $\\bar x_i = (x_i + x_{i+1})/2$ und $\\Delta Q_{0,i} = n_i/N$.'),
+        solution: T('Weigh each class mean by its share of the particles: ', 'Gewichten Sie jede Klassenmitte mit ihrem Anteil an den Partikeln: ') +
+          `$$x_{1,0} = \\sum_i \\bar x_i\\,\\frac{n_i}{N} = \\frac{${xm.map((x, i) => `${x} \\times ${n[i]}`).join(' + ')}}{${N}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+      };
+    } },
+    { id: 'q2fly', calc: true, make: (rand) => {
+      const a = R.pick(rand, [1, 2]), b = R.pick(rand, [50, 100, 200]), X = R.pick(rand, [5, 10, 20, 40].filter((x) => x > a && x < b));
+      const L = Math.log(b / a), ans = 1 / (X * L), q3 = 1 / (b - a), noNorm = 1 / (X * (b - a)), log10 = 1 / (X * Math.log10(b / a));
+      return {
+        kind: 'number',
+        text: T(`The mass distribution of a fly ash rises in a straight line, $Q_3$ from 0 at ${a} µm to 1 at ${b} µm. Compute the area-weighted density $q_2$ at $x$ = ${X} µm.`, `Die Massenverteilung einer Flugasche steigt gerade an, $Q_3$ von 0 bei ${a} µm bis 1 bei ${b} µm. Berechnen Sie die flächengewichtete Dichte $q_2$ bei $x$ = ${X} µm.`),
+        label: `$q_2$(${X} µm) =`, unit: 'µm⁻¹', answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - q3) <= 0.01 * q3, msg: T('That is $q_3$. Change the weighting: $q_2 = x^{-1} q_3/M_{-1,3}$.', 'Das ist $q_3$. Wechseln Sie die Gewichtung: $q_2 = x^{-1} q_3/M_{-1,3}$.') },
+          { test: (v) => Math.abs(v - noNorm) <= 0.01 * noNorm, msg: T('You divided by $x$ but did not renormalise. Divide by $M_{-1,3} = \\ln(x_\\mathrm{max}/x_\\mathrm{min})/(x_\\mathrm{max} - x_\\mathrm{min})$ so that the area stays 1.', 'Sie haben durch $x$ geteilt, aber nicht neu normiert. Teilen Sie durch $M_{-1,3} = \\ln(x_\\mathrm{max}/x_\\mathrm{min})/(x_\\mathrm{max} - x_\\mathrm{min})$, damit die Fläche 1 bleibt.') },
+          { test: (v) => Math.abs(v - log10) <= 0.01 * log10, msg: T('Use the natural logarithm: $\\int \\mathrm{d}x/x = \\ln x$.', 'Verwenden Sie den natürlichen Logarithmus: $\\int \\mathrm{d}x/x = \\ln x$.') }],
+        hint: T('$q_3 = 1/(x_\\mathrm{max} - x_\\mathrm{min})$; then $q_2 = x^{-1} q_3/M_{-1,3}$ with $M_{-1,3} = \\int q_3/x\\,\\mathrm{d}x$.', '$q_3 = 1/(x_\\mathrm{max} - x_\\mathrm{min})$; dann $q_2 = x^{-1} q_3/M_{-1,3}$ mit $M_{-1,3} = \\int q_3/x\\,\\mathrm{d}x$.'),
+        solution: `$$M_{-1,3} = \\int_{${a}}^{${b}} \\frac{1}{x\\,(${b} - ${a})}\\,\\mathrm{d}x = \\frac{\\ln(${b}/${a})}{${b - a}\\ ${UT}} = ${tnum(L / (b - a))}\\ ${UT}^{-1}$$` +
+          `$$q_2(x) = \\frac{x^{-1} q_3}{M_{-1,3}} = \\frac{1}{x \\ln(${b}/${a})},\\qquad q_2(${X}\\ ${UT}) = ${tnum(ans)}\\ ${UT}^{-1}$$`,
+      };
+    } },
+    { id: 'x12table', calc: true, make: (rand) => {
+      const SETS = [[1, 10, 40, 100], [1, 20, 50, 100], [1, 5, 25, 50], [2, 10, 30, 50]];
+      const lim = R.pick(rand, SETS), a = lim[0], b = lim[lim.length - 1];
+      const dQ = lim.slice(1).map((x, i) => +((x - lim[i]) / (b - a)).toFixed(3)), xm = lim.slice(1).map((x, i) => (x + lim[i]) / 2);
+      const S = dQ.reduce((s, v, i) => s + v / xm[i], 0), ans = 1 / S, x13 = dQ.reduce((s, v, i) => s + v * xm[i], 0), exact = (b - a) / Math.log(b / a);
+      return {
+        kind: 'number',
+        text: T(`$Q_3$ of a fly ash rises in a straight line from ${a} to ${b} µm. A sieve analysis gives the mass shares of three classes (table). Compute the Sauter diameter $x_{1,2}$ from the table, using the class means.`, `$Q_3$ einer Flugasche steigt gerade von ${a} bis ${b} µm. Eine Siebanalyse liefert die Massenanteile von drei Klassen (Tabelle). Berechnen Sie den Sauterdurchmesser $x_{1,2}$ aus der Tabelle mit den Klassenmitten.`),
+        table: tableHTML(['i', T('class', 'Klasse'), K('\\bar x_i\\;/\\;' + UT), K('\\Delta Q_{3,i}')], dQ.map((v, i) => [String(i + 1), `${lim[i]} – ${lim[i + 1]} µm`, String(xm[i]), fix(v, 3)])).replace('class="dt"', 'class="dt res small"'),
+        label: '$x_{1,2}$ =', unit: U, answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - x13) <= 0.01 * x13, msg: T('That is $x_{1,3} = \\sum_i \\bar x_i\\,\\Delta Q_{3,i}$. The Sauter diameter is $1/M_{-1,3}$.', 'Das ist $x_{1,3} = \\sum_i \\bar x_i\\,\\Delta Q_{3,i}$. Der Sauterdurchmesser ist $1/M_{-1,3}$.') },
+          { test: (v) => Math.abs(v - exact) <= 0.01 * exact, msg: T('That is the exact value from the integral. The table with its three wide classes gives a larger value: compute $1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$.', 'Das ist der exakte Wert aus dem Integral. Die Tabelle mit ihren drei breiten Klassen ergibt einen größeren Wert: Berechnen Sie $1/\\sum_i (\\Delta Q_{3,i}/\\bar x_i)$.') },
+          { test: (v) => Math.abs(v - S) <= 0.01 * S, msg: T('That is $M_{-1,3}$ in µm⁻¹. The Sauter diameter is its reciprocal.', 'Das ist $M_{-1,3}$ in µm⁻¹. Der Sauterdurchmesser ist sein Kehrwert.') }],
+        hint: T('$x_{1,2} = 1/M_{-1,3}$ and $M_{-1,3} \\approx \\sum_i \\Delta Q_{3,i}/\\bar x_i$.', '$x_{1,2} = 1/M_{-1,3}$ und $M_{-1,3} \\approx \\sum_i \\Delta Q_{3,i}/\\bar x_i$.'),
+        solution: `$$M_{-1,3} \\approx ${dQ.map((v, i) => `\\frac{${fix(v, 3)}}{${xm[i]}}`).join(' + ')} = ${tnum(S)}\\ ${UT}^{-1},\\qquad x_{1,2} = \\frac{1}{M_{-1,3}} = ${tnum(ans)}\\ ${UT}$$` +
+          T(`The integral gives ${num(exact)}: the wide fine class makes the table value too large.`, `Das Integral ergibt ${num(exact)}: Die breite feine Klasse macht den Tabellenwert zu groß.`),
+      };
+    } },
+    { id: 'noiseN', calc: true, make: (rand) => {
+      const P = R.pick(rand, [1, 2, 5, 10]), E = R.pick(rand, [2, 5, 10]), n = 1 / Math.pow(E / 100, 2), ans = n / (P / 100), lin = (100 / E) / (P / 100);
+      return {
+        kind: 'number',
+        text: T(`A class that holds $n$ particles scatters by about $1/\\sqrt n$ from sample to sample. One class holds ${P} % of the particles. How many particles $N$ must the sample have so that this bar scatters by only ${E} %?`, `Eine Klasse mit $n$ Partikeln streut von Stichprobe zu Stichprobe um etwa $1/\\sqrt n$. Eine Klasse enthält ${P} % der Partikel. Wie viele Partikel $N$ muss die Stichprobe haben, damit dieser Balken nur um ${E} % streut?`),
+        label: '$N$ =', unit: T('particles', 'Partikel'), answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - n) <= 0.01 * n, msg: T(`That is the number the class itself needs. It holds only ${P} % of all particles.`, `Das ist die Anzahl, die die Klasse selbst braucht. Sie enthält nur ${P} % aller Partikel.`) },
+          { test: (v) => Math.abs(v - lin) <= 0.01 * lin, msg: T(`The scatter falls only with the square root: $n = 1/${fix(E / 100, 2)}^2$.`, `Die Streuung fällt nur mit der Wurzel: $n = 1/${fix(E / 100, 2)}^2$.`) }],
+        hint: T(`First the particles the class needs: $1/\\sqrt n = ${fix(E / 100, 2)}$. Then the sample that puts that many into a ${P} % class.`, `Zuerst die Partikel, die die Klasse braucht: $1/\\sqrt n = ${fix(E / 100, 2)}$. Dann die Stichprobe, die so viele in eine ${P}-%-Klasse bringt.`),
+        solution: `$$n = \\frac{1}{${fix(E / 100, 2)}^2} = ${nfmt(n)},\\qquad N = \\frac{n}{${fix(P / 100, 2)}} = ${nfmt(ans).replace(' ', '\\,')}$$` +
+          T('Ten times less scatter needs a hundred times more particles.', 'Zehnmal weniger Streuung verlangt hundertmal mehr Partikel.'),
+      };
+    } },
+  ];
+
+  App.lesson('04', {
+    ready: true,
+    short: () => T('Discrete and continuous', 'Diskret und stetig'),
+    question: () => T('When do bars become a curve?', 'Wann werden Balken zur Kurve?'),
+    sub: () => T('Histograms from samples approach the continuous density; sums become integrals.', 'Histogramme aus Stichproben nähern sich der stetigen Dichte; Summen werden zu Integralen.'),
+    mount: (root, mode) => {
+      plot = null; conv = null; readoutEl = null; settingsHost = null; mountRoot = null; tableHost = null; formHost = null; flyHost = null;
+      if (mode === 'look') mountLook(root);
+      else if (mode === 'test') root.appendChild(App.TestPanel('04', GENS));
+      else mountPlay(root);
+    },
+    gens: GENS,
+  });
+})();
 /* ==== part: lesson05.js ==== */
 /* Lesson 05: Middle and width. The density drawn as a plate on a pivot (balanced mean), mode and median,
    quantiles read off Q_r, width measures for every r, and the Sauter diameter on its way to S_V. */
@@ -3913,8 +4687,6 @@ var App = (function () {
     () => T('One particle, several sizes: equivalent diameters, form factors and sphericity.', 'Ein Partikel, mehrere Größen: Äquivalentdurchmesser, Formfaktoren und Sphärizität.'));
   stub('03', () => T('Abscissa substitution', 'Abszissentransformation'), () => T('How do areas become sizes?', 'Wie werden aus Flächen Größen?'),
     () => T('From a measured property $\\xi$ to the size $x$, with the factor $\\mathrm{d}\\xi/\\mathrm{d}x$.', 'Von einer Messgröße $\\xi$ zur Größe $x$, mit dem Faktor $\\mathrm{d}\\xi/\\mathrm{d}x$.'));
-  stub('04', () => T('Discrete and continuous', 'Diskret und stetig'), () => T('When do bars become a curve?', 'Wann werden Balken zur Kurve?'),
-    () => T('Histograms from samples approach the continuous density; sums become integrals.', 'Histogramme aus Stichproben nähern sich der stetigen Dichte; Summen werden zu Integralen.'));
 })();
 </script>
 <!-- ===== VENDOR: fonts (SIL Open Font License 1.1) and KaTeX 0.16.22 (MIT). Nothing below is hand-edited. ===== -->
