@@ -1,7 +1,7 @@
 {
   "name": "qrious",
-  "version": "0.1.0",
-  "description": "Qrious · Particle size distributions. An open learning app on particle size, shape and distributions.",
+  "version": "1.0.0-dev",
+  "description": "Qrious \u00b7 Particle size distributions. An open learning app on particle size, shape and distributions.",
   "private": true,
   "license": "MIT",
   "engines": {
