@@ -116,6 +116,7 @@ select.dd{width:100%;padding:7px 30px 7px 10px;border:1px solid var(--line);bord
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 15px) 52%,calc(100% - 10px) 52%;background-size:5px 5px;background-repeat:no-repeat}
 .reset{width:100%;text-align:center;margin-top:4px}
+.btn.carry{width:100%;text-align:center;margin-top:12px;border-color:var(--accent);color:var(--accent)}
 .fixed-r{font-size:14px}
 
 /* ---------- sliders (as in Colour with Mie) ---------- */
@@ -142,7 +143,7 @@ input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:2
 .plot-foot{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:14px;margin-top:0;min-height:22px}
 .plot svg{display:block;width:100%;overflow:visible;touch-action:pan-y}
 .plot svg text{font-family:var(--mono);font-size:11.5px;fill:var(--muted)}
-.plot svg .lab{font-family:var(--ui);font-size:12.5px;fill:var(--ink)}
+.plot svg .lab{font-family:var(--ui);font-size:12.5px;fill:var(--ink);paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round}
 .plot svg .axis{stroke:var(--muted);stroke-width:1;fill:none}
 .plot svg .gridl{stroke:var(--line);stroke-width:1}
 .plot svg .bar{fill:var(--rc);fill-opacity:.2;stroke:var(--rc);stroke-width:1.2}
@@ -269,6 +270,28 @@ footer .related{margin-bottom:6px}
 footer a{color:var(--muted)}
 footer a:hover{color:var(--accent)}
 
+/* ---------- lesson 02 ---------- */
+.tog.rc[aria-pressed="true"]{background:color-mix(in srgb,var(--rc) 18%,var(--surface));border-color:var(--rc);color:var(--ink)}
+.tog.rc[aria-pressed="true"] .katex{color:var(--ink)}
+.boxplot{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:14px;align-items:center}
+.boxhost svg{display:block;width:100%;height:auto}
+.boxplot .note{text-align:center;margin-top:4px}
+table.dt.conv th.step,table.dt.conv td.step{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+table.dt.conv tr.sum td{border-top:2px solid var(--line);border-bottom:none}
+table.dt.conv td.sumlab{font-family:var(--ui);color:var(--muted)}
+table.dt.res{min-width:420px}
+table.dt.res td:first-child,table.dt.res th:first-child{text-align:left;font-family:var(--ui)}
+.stepnote{font-size:15px;margin-top:10px;padding:8px 12px;border-left:3px solid var(--accent);background:var(--tint);border-radius:0 8px 8px 0}
+.tablebar .param.inline{margin:0;min-width:180px}
+.mfrow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mfans{margin:2px 0 4px}
+.finder .f{font-size:15px}
+.mfquiz{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+.mfquiz .h{margin-bottom:8px}
+.mfquiz .btn{margin-top:8px}
+.btn.okb{border-color:var(--good);background:var(--good-soft)}
+.btn.nob{border-color:var(--bad);background:var(--bad-soft)}
+
 /* ---------- responsive ---------- */
 @media (max-width:1560px){
   .topnav a:not(.on) .full{display:none}
@@ -288,6 +311,8 @@ footer a:hover{color:var(--accent)}
   .marrow svg{transform:rotate(90deg);width:28px}
   .wm.big svg{height:60px}
   .qmini{grid-template-columns:minmax(0,1fr)}
+  .boxplot{grid-template-columns:minmax(0,1fr)}
+  .boxhost{max-width:420px;margin:0 auto}
   main{padding:12px 12px 8px}
   .card{padding:12px}
 }
@@ -733,7 +758,7 @@ var App = (function () {
     if (v == null || !isFinite(v)) return '–';
     if (v === 0) return '0';
     n = n || 3;
-    const e = Math.floor(Math.log10(Math.abs(v)));
+    const e = Math.floor(Math.log10(Math.abs(+v.toPrecision(n))));
     const dec = Math.max(0, n - 1 - e);
     return group(v.toFixed(Math.min(dec, 10)));
   }
@@ -1384,8 +1409,8 @@ var App = (function () {
         return { x: { min: lo, max: d.x[d.n], log: !!g.log }, yL: { min: 0, max: 1 }, yR: g.showq === false && opt.noRight ? null : { min: 0, max: opt.qmax || niceMax(top) }, small: opt.small };
       },
       head: () => {
-        const g = get(), r = g.r, u = g.unit;
-        const left = g.showQ !== false || g.axisQ ? `<span class="ax ${rcol(r)}">${swQ(r)}${K('Q_' + r + '(x_i)\\;/\\;\\text{–}')}</span>` : '<span></span>';
+        const g = get(), r = g.r, u = g.unit, rQ = g.rQ != null ? g.rQ : r;
+        const left = g.showQ !== false || g.axisQ ? `<span class="ax ${rcol(rQ)}">${swQ(rQ)}${K('Q_' + rQ + '(x_i)\\;/\\;\\text{–}')}</span>` : '<span></span>';
         let right = '';
         if (g.showq !== false) {
           right = g.amounts
@@ -1804,6 +1829,13 @@ var App = (function () {
     sb = slider({ label: md(T('Cursor $x_b$', 'Cursor $x_b$')), labelText: 'x_b', min: d.x[0], max: d.x[d.n], step: cstep, value: st.xb, unit: D.unit, digits: 'sig',
       onInput: (v) => { st.xb = v; st.hover = null; refresh('plot'); paintResults(); } });
     settingsHost.append(sa, sb);
+    settingsHost.appendChild(h('button', { type: 'button', class: 'btn carry', text: T('Weight this data differently (lesson 02) →', 'Diese Daten anders gewichten (Lektion 02) →'),
+      title: T('Opens lesson 02 with this table as its data', 'Öffnet Lektion 02 mit dieser Tabelle als Daten'),
+      onclick: () => {
+        const raw = D.raw;
+        App.S.carry = { from: '01', limits: raw.limits.slice(), m: raw.m.slice(), r: D.r, l: D.r, unit: D.unit, munit: D.munit, fresh: true };
+        App.S.modes['02'] = 'play'; App.go('02');
+      } }));
     settingsHost.appendChild(h('button', { type: 'button', class: 'btn reset', text: T('Return to defaults', 'Auf Standard zurücksetzen'), onclick: () => { st = defaults(); setSource('sieve'); remount(); } }));
   }
 
@@ -2204,6 +2236,895 @@ var App = (function () {
     gens: GENS,
   });
 })();
+/* ==== part: lesson02.js ==== */
+/* Lesson 02 · Weighting: count or weigh, does it matter? */
+(function () {
+  'use strict';
+  const { S, T, md, h, card, tog, dd, param, presetBox, Plot, polyline, sig, fix, rcol, swQ, swq, texInv, inv, R, K, esc, parseNum } = App;
+  const { RNAME, rOptions, niceMax, discPlot, tableHTML, unitTex } = App.shared;
+
+  /* ---------- data ---------- */
+  const SRC = {
+    numass: { limits: [0, 1, 2, 5, 10, 20], m: [8000, 3000, 800, 150, 12], l: 0, unit: 'µm', munit: '' },
+    sieve: { limits: [0, 0.5, 1, 2, 4, 8], m: [1, 4, 5, 7, 3], l: 3, unit: 'mm', munit: 'g' },
+    image: { limits: [0, 10, 20, 30, 40, 50, 60], m: [4, 18, 30, 26, 15, 7], l: 2, unit: 'µm', munit: '%' },
+    look: { limits: [1, 2, 3, 4, 5, 6], m: [30, 15, 8, 4, 3], l: 0, unit: 'µm', munit: '' },
+  };
+  const FLY = () => QMath.uniformQ(1, 100, 3, 'µm');
+  const RS = [0, 1, 2, 3];
+  function defaults() {
+    return { src: 'numass', mine: null, showq: [true, false, false, true], showQ: [true, false, false, true], log: false, medians: true,
+      tr: 3, cols: 1, check: false, entries: {}, marks: null, solClicks: 0, hover: null, preset: 'numass', mfFrom: 0, mfTo: 3 };
+  }
+  let st = defaults();
+
+  function rawOf(s) {
+    if (s.src === 'mine' && s.mine) return s.mine;
+    if (s.src === 'carry' && S.carry) return S.carry;
+    return SRC[s.src] || SRC.numass;
+  }
+  // D = { cont, l, unit, munit, base, by: [dist for r = 0..3] }
+  function data(s) {
+    s = s || st;
+    if (s.src === 'flyash') {
+      const c = FLY();
+      return { cont: true, l: 3, unit: 'µm', munit: '', base: c, by: RS.map((r) => (r === 3 ? c : QMath.convertCont(c, r))) };
+    }
+    const raw = rawOf(s), l = raw.l != null ? raw.l : raw.r;
+    const base = QMath.discrete(raw.limits, raw.m, l, raw.unit);
+    return { cont: false, l: l, unit: raw.unit, munit: raw.munit, raw: raw, base: base, by: RS.map((r) => (r === l ? base : QMath.convertDiscrete(base, r))) };
+  }
+  const median = (D, r) => (D.cont ? QMath.quantileCont(D.by[r], 0.5) : QMath.quantileDiscrete(D.by[r], 0.5));
+  const meanOf = (D, r) => (D.cont ? QMath.meanCont(D.by[r]) : QMath.momentDiscrete(D.by[r], 1));
+  const moment = (D, k, l) => (D.cont ? QMath.momentCont(D.by[l], k) : QMath.momentDiscrete(D.by[l], k));
+  const Qat = (D, r, x) => (D.cont ? QMath.QCont(D.by[r], x) : QMath.QatDiscrete(D.by[r], x));
+  const xlo = (D) => (D.cont ? D.base.xmin : D.base.x[0]);
+  const xhi = (D) => (D.cont ? D.base.xmax : D.base.x[D.base.n]);
+
+  /* ---------- number formats ---------- */
+  const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+  const sup = (e) => String(e).split('').map((c) => SUP[c] || c).join('');
+  function nf(v, n) {
+    n = n || 3;
+    if (v == null || !isFinite(v)) return '–';
+    if (v === 0) return '0';
+    const a = Math.abs(v);
+    if (a < 1e-3 || a >= 1e5) {
+      let e = Math.floor(Math.log10(a)), m = v / Math.pow(10, e);
+      if (Math.abs(+m.toFixed(n - 1)) >= 10) { e++; m /= 10; }
+      return m.toFixed(n - 1) + '·10' + sup(e);
+    }
+    return sig(v, n);
+  }
+  function parseLoose(s) {
+    if (s == null) return NaN;
+    s = String(s).trim().replace(/\s/g, '').replace(',', '.').replace(/[−⁻]/g, '-')
+      .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => '⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c))
+      .replace(/[·×*x]10\^?\(?(-?\d+)\)?$/i, 'e$1');
+    return parseNum(s);
+  }
+  const xfmt = (v) => String(+v.toPrecision(5));
+  const Qfmt = (v) => fix(v, 3);
+  // unit of M_{k,l}: L^k
+  const mUnit = (u, k) => (k === 0 ? '' : k === 1 ? u : u + sup(k));
+  const mUnitTex = (u, k) => (k === 0 ? '' : '\\mathrm{' + u.replace('µ', '\\mu ') + '}' + (k === 1 ? '' : '^{' + k + '}'));
+  const sub = (s) => String(s).replace(/[0-9,-]/g, (c) => ({ 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', ',': ',', '-': '₋' }[c]));
+
+  /* ---------- the weighting plot ---------- */
+  // g = { D, showq[4], showQ[4], log, medians, hover }
+  function wPlot(get, opt) {
+    opt = opt || {};
+    return Plot({
+      height: opt.height,
+      spec: () => {
+        const g = get(), D = g.D;
+        const lo = g.log ? (xlo(D) > 0 ? xlo(D) : D.base.x[1] / 4) : xlo(D);
+        let top = 0;
+        RS.forEach((r) => {
+          if (!g.showq[r]) return;
+          const d = D.by[r];
+          if (D.cont) { for (let i = 0; i <= 200; i++) { const x = g.log ? lo * Math.pow(xhi(D) / lo, i / 200) : lo + (xhi(D) - lo) * i / 200; top = Math.max(top, QMath.qCont(d, x)); } }
+          else d.q.forEach((q, i) => { if (d.x[i + 1] > lo) top = Math.max(top, q); });
+        });
+        const anyq = g.showq.some(Boolean);
+        return { x: { min: lo, max: xhi(D), log: !!g.log }, yL: { min: 0, max: 1 }, yR: anyq ? { min: 0, max: niceMax(top) } : null, small: opt.small };
+      },
+      head: () => {
+        const g = get(), u = g.D.unit;
+        const Qs = RS.filter((r) => g.showQ[r]), qs = RS.filter((r) => g.showq[r]);
+        const single = qs.length === 1 && !g.D.cont;
+        const left = Qs.length ? `<span class="ax">${Qs.map((r) => `<span class="${rcol(r)}">${swQ(r)}</span>${K('Q_' + r)}`).join(' ')}${K('\\;/\\;\\text{–}')}</span>` : '<span></span>';
+        const right = qs.length ? `<span class="ax">${qs.map((r) => `<span class="${rcol(r)}">${swq(r, single)}</span>${K('q_' + r)}`).join(' ')}${K('\\;/\\;' + texInv(u))}</span>` : '';
+        return left + right;
+      },
+      foot: () => `<span class="note">${opt.footNote ? opt.footNote() : ''}</span><span>${K('x\\;/\\;' + unitTex(get().D.unit))}</span>`,
+      aria: () => T('Cumulative and density distributions for several weightings', 'Verteilungssummen und -dichten für mehrere Gewichtungen'),
+      draw: (F) => drawW(F, get()),
+      onHover: opt.onHover ? (x) => { const D = get().D; opt.onHover(x == null || D.cont ? null : App.shared.intervalAt(D.base, x)); } : null,
+      onClick: opt.onHover ? (x) => { const D = get().D; if (!D.cont) opt.onHover(App.shared.intervalAt(D.base, x)); } : null,
+    });
+  }
+  function drawW(F, g) {
+    const D = g.D, lo = F.o.x.min, hi = xhi(D);
+    const X = (v) => F.X(Math.max(v, lo));
+    const anyQ = g.showQ.some(Boolean);
+    let s = F.axes({ noLeft: !anyQ });
+    if (!D.cont && g.hover != null) {
+      const d = D.base, i = g.hover;
+      s += `<rect x="${X(d.x[i])}" y="${F.y1}" width="${Math.max(0, X(d.x[i + 1]) - X(d.x[i]))}" height="${F.y0 - F.y1}" style="fill:var(--accent-soft)"/>`;
+    }
+    const qs = RS.filter((r) => g.showq[r]);
+    const xs = (n) => { const out = []; for (let i = 0; i <= n; i++) out.push(g.log ? lo * Math.pow(hi / lo, i / n) : lo + (hi - lo) * i / n); return out; };
+    qs.forEach((r) => {
+      const d = D.by[r];
+      s += `<g class="${rcol(r)}">`;
+      if (D.cont) {
+        s += polyline(xs(320).map((x) => [F.X(x), F.YR(QMath.qCont(d, x))]), 'qline');
+      } else if (qs.length === 1) {
+        for (let i = 0; i < d.n; i++) {
+          const x0 = X(d.x[i]), x1 = X(d.x[i + 1]);
+          if (x1 - x0 < 0.5) continue;
+          s += `<rect class="bar${g.hover === i ? ' hi' : ''}" x="${x0}" y="${F.YR(d.q[i])}" width="${x1 - x0}" height="${Math.max(0, F.y0 - F.YR(d.q[i]))}"/>`;
+        }
+      } else {
+        let p = `M${X(d.x[0]).toFixed(1)} ${F.y0}`;
+        for (let i = 0; i < d.n; i++) p += `V${F.YR(d.q[i]).toFixed(1)}H${X(d.x[i + 1]).toFixed(1)}`;
+        p += `V${F.y0}`;
+        s += `<path class="qline" d="${p}"/>`;
+      }
+      s += '</g>';
+    });
+    const Qs = RS.filter((r) => g.showQ[r]);
+    if (Qs.length && g.medians !== false) {
+      const mx = Math.max.apply(null, Qs.map((r) => median(D, r)));
+      s += `<line class="guide" x1="${F.x0}" x2="${X(mx)}" y1="${F.YL(0.5)}" y2="${F.YL(0.5)}"/>`;
+    }
+    let labs = '';
+    Qs.forEach((r, j) => {
+      const d = D.by[r];
+      s += `<g class="${rcol(r)}">`;
+      if (D.cont) s += polyline(xs(320).map((x) => [F.X(x), F.YL(QMath.QCont(d, x))]), 'Qline');
+      else {
+        const pts = [];
+        for (let i = 0; i <= d.n; i++) if (d.x[i] >= lo || i === d.n) pts.push([X(d.x[i]), F.YL(d.Q[i])]);
+        s += polyline(pts, 'Qline');
+        pts.forEach((p) => { s += `<circle class="pt" cx="${p[0]}" cy="${p[1]}" r="3.4"/>`; });
+      }
+      if (g.medians !== false) {
+        const m = median(D, r), px = X(m);
+        s += `<line x1="${px}" x2="${px}" y1="${F.YL(0.5)}" y2="${F.y0}" style="stroke:var(--rc);stroke-width:1.3;stroke-dasharray:4 3"/>`;
+        s += `<circle cx="${px}" cy="${F.YL(0.5)}" r="4.2" style="fill:var(--surface);stroke:var(--rc);stroke-width:2"/>`;
+        const anchor = px > F.x1 - 60 ? 'end' : 'start';
+        labs += `<g class="${rcol(r)}"><text class="lab" x="${anchor === 'end' ? px - 4 : px + 4}" y="${F.y0 - 6 - 15 * j}" text-anchor="${anchor}" style="fill:var(--rc);font-weight:700">x<tspan dy="3" style="font-size:9.5px">50,${r}</tspan></text></g>`;
+      }
+      s += '</g>';
+    });
+    return s + labs; // labels last, so their halo sits on top of every curve
+  }
+
+  /* ---------- the particle box (Look) ---------- */
+  let PARTS = null;
+  function particles() {
+    if (PARTS) return PARTS;
+    const rand = QMath.rng(2026), L = SRC.look.limits, N = SRC.look.m, W = 40, H = 26;
+    const list = [];
+    for (let i = N.length - 1; i >= 0; i--) for (let k = 0; k < N[i]; k++) list.push({ c: i, d: L[i] + (L[i + 1] - L[i]) * (0.12 + 0.76 * rand()) });
+    const placed = [];
+    list.forEach((p) => {
+      for (let t = 0; t < 6000; t++) {
+        const x = p.d / 2 + rand() * (W - p.d), y = p.d / 2 + rand() * (H - p.d);
+        if (placed.every((o) => Math.hypot(o.x - x, o.y - y) > (o.d + p.d) / 2 + 0.3)) { p.x = x; p.y = y; break; }
+      }
+      if (p.x == null) { p.x = W / 2; p.y = H / 2; }
+      placed.push(p);
+    });
+    PARTS = { W: W, H: H, list: placed, dmax: Math.max.apply(null, placed.map((p) => p.d)) };
+    return PARTS;
+  }
+  function boxSVG(r, hover) {
+    const P = particles();
+    let s = `<svg viewBox="-0.6 -0.6 ${P.W + 1.2} ${P.H + 4}" class="pbox ${rcol(r)}" role="img" aria-label="${esc(T('60 particles of one sample', '60 Partikel einer Probe'))}">`;
+    s += `<rect x="0" y="0" width="${P.W}" height="${P.H}" rx="0.8" style="fill:none;stroke:var(--line);stroke-width:0.15"/>`;
+    P.list.forEach((p) => {
+      const w = r === 0 ? 0.55 : 0.1 + 0.85 * Math.pow(p.d / P.dmax, r);
+      const dim = hover != null && p.c !== hover;
+      s += `<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="${(p.d / 2).toFixed(2)}" style="fill:var(--rc);fill-opacity:${(dim ? w * 0.25 : w).toFixed(3)};stroke:var(--rc);stroke-width:${hover === p.c ? 0.28 : 0.12};stroke-opacity:${dim ? 0.3 : 0.9}"/>`;
+    });
+    // scale bar 5 µm
+    s += `<path d="M${P.W - 5} ${P.H + 2}H${P.W}" style="stroke:var(--ink);stroke-width:0.35"/><text x="${P.W - 5.8}" y="${P.H + 2.6}" text-anchor="end" style="font-size:1.7px;fill:var(--muted);font-family:var(--ui)">5 µm</text>`;
+    return s + '</svg>';
+  }
+
+  /* ---------- readout ---------- */
+  function readout(s) {
+    const D = data(s);
+    if (D.cont) {
+      return md(T('Medians: ', 'Mediane: ') + RS.filter((r) => s.showQ[r]).map((r) => `$x_{50,${r}}$ = <span class="num">${sig(median(D, r), 3)} ${D.unit}</span>`).join(' · ') +
+        `<span class="muted"> · ${T('all four curves describe the same fly ash', 'alle vier Kurven beschreiben dieselbe Flugasche')}</span>`);
+    }
+    const d = D.base;
+    if (s.hover != null) {
+      const i = s.hover;
+      const names = [T('by number', 'nach Anzahl'), T('by length', 'nach Länge'), T('by area', 'nach Fläche'), T('by volume', 'nach Volumen')];
+      return md(T(`Class ${i}, ${xfmt(d.x[i])} to ${xfmt(d.x[i + 1])} ${D.unit}, holds `, `Klasse ${i}, ${xfmt(d.x[i])} bis ${xfmt(d.x[i + 1])} ${D.unit}, enthält `) +
+        RS.map((r) => `<span class="${rcol(r)}" style="color:var(--rc)">${names[r]} $\\Delta Q_${r}$ = <span class="num">${nf(D.by[r].dQ[i])}</span></span>`).join(' · '));
+    }
+    const Qs = RS.filter((r) => s.showQ[r]);
+    return md((Qs.length ? T('Medians: ', 'Mediane: ') + Qs.map((r) => `$x_{50,${r}}$ = <span class="num">${sig(median(D, r), 3)} ${D.unit}</span>`).join(' · ') + ' · ' : '') +
+      `<span class="muted">${T('hover or tap a class to compare its shares', 'eine Klasse berühren vergleicht ihre Anteile')}</span>`);
+  }
+
+  /* ---------- conversion table (column by column; Check my table) ---------- */
+  const STEPS = (l, r, k, u) => [
+    T(`**Step 1.** Multiply each density by $\\bar x_i^{${k}}$: every particle now counts with $x^{${k}}$ instead of ${l === 0 ? '1' : '$x^{' + l + '}$'}.`,
+      `**Schritt 1.** Multiplizieren Sie jede Dichte mit $\\bar x_i^{${k}}$: Jedes Partikel zählt jetzt mit $x^{${k}}$ statt ${l === 0 ? '1' : '$x^{' + l + '}$'}.`),
+    T(`**Step 2.** Multiply by the width $\\Delta x_i$ and add up. The sum is the moment $M_{${k},${l}}$: the area under the weighted curve, which is no longer 1.`,
+      `**Schritt 2.** Mit der Breite $\\Delta x_i$ multiplizieren und aufsummieren. Die Summe ist das Moment $M_{${k},${l}}$: die Fläche unter der gewichteten Kurve, die nicht mehr 1 ist.`),
+    T(`**Step 3.** Divide by $M_{${k},${l}}$. Now the area is 1 again: this is $q_${r}(\\bar x_i)$.`,
+      `**Schritt 3.** Durch $M_{${k},${l}}$ teilen. Jetzt ist die Fläche wieder 1: Das ist $q_${r}(\\bar x_i)$.`),
+    T(`**Step 4.** Add the bar areas $q_${r}(\\bar x_i)\\,\\Delta x_i$ from the left: $Q_${r}(x_i)$, from 0 to 1.`,
+      `**Schritt 4.** Die Balkenflächen $q_${r}(\\bar x_i)\\,\\Delta x_i$ von links addieren: $Q_${r}(x_i)$, von 0 bis 1.`),
+  ];
+  let tableHost = null;
+  function toMine() {
+    if (st.src !== 'mine') {
+      const raw = rawOf(st), l = raw.l != null ? raw.l : raw.r;
+      st.mine = { limits: raw.limits.slice(), m: raw.m.slice(), l: l, unit: raw.unit, munit: raw.munit };
+      st.src = 'mine'; st.preset = null;
+    }
+  }
+  function paintTable() {
+    if (!tableHost) return;
+    tableHost.innerHTML = '';
+    const D = data();
+    if (D.cont) {
+      const c = D.base;
+      tableHost.appendChild(h('div', { html: md(T('The fly ash is a continuous distribution, so the conversion uses integrals instead of a table. $Q_3$ rises linearly from 1 to 100 µm, so $q_3$ is constant:',
+        'Die Flugasche ist eine stetige Verteilung; die Umrechnung verwendet daher Integrale statt einer Tabelle. $Q_3$ steigt linear von 1 bis 100 µm, also ist $q_3$ konstant:') +
+        `$$q_3(x) = \\frac{1}{x_\\mathrm{max} - x_\\mathrm{min}} = \\frac{1}{99\\ \\mu\\mathrm{m}},\\qquad M_{-1,3} = \\int_{x_\\mathrm{min}}^{x_\\mathrm{max}} x^{-1} q_3(x)\\,\\mathrm{d}x = \\frac{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}{x_\\mathrm{max} - x_\\mathrm{min}} = ${sig(QMath.momentCont(c, -1), 4)}\\ \\mu\\mathrm{m}^{-1}$$` +
+        `$$q_2(x) = \\frac{x^{-1} q_3(x)}{M_{-1,3}} = \\frac{1}{x\\,\\ln(x_\\mathrm{max}/x_\\mathrm{min})},\\qquad Q_2(x) = \\frac{\\ln(x/x_\\mathrm{min})}{\\ln(x_\\mathrm{max}/x_\\mathrm{min})}$$` +
+        T('$Q_2$ is logarithmic in $x$: on the log axis it is a straight line. Its median is $x_{50,2} = \\sqrt{1 \\times 100}$ µm = 10 µm, while $x_{50,3}$ = 50.5 µm.',
+          '$Q_2$ ist logarithmisch in $x$: Auf der log. Achse ist es eine Gerade. Sein Median ist $x_{50,2} = \\sqrt{1 \\times 100}$ µm = 10 µm, während $x_{50,3}$ = 50.5 µm.')) }));
+      return;
+    }
+    const l = D.l, r = st.tr === l ? (l === 3 ? 0 : 3) : st.tr, k = r - l, d = D.base, out = D.by[r];
+    const u = D.unit;
+    const w = d.xm.map((x, i) => Math.pow(x, k) * d.q[i]);
+    const wa = w.map((v, i) => v * d.dx[i]);
+    const M = out.M;
+    const show = st.check ? 4 : st.cols;
+    const head = ['i', K('x_i\\;/\\;' + unitTex(u)), K('m_{' + l + ',i}' + (D.munit ? '\\;/\\;\\mathrm{' + D.munit.replace('%', '\\%') + '}' : '')),
+      K('\\bar x_i\\;/\\;' + unitTex(u)), K('\\Delta x_i\\;/\\;' + unitTex(u)), K('q_' + l + '(\\bar x_i)\\;/\\;' + texInv(u))];
+    const stepHead = [K('\\bar x_i^{' + k + '}\\,q_' + l + '(\\bar x_i)'), K('\\bar x_i^{' + k + '}\\,q_' + l + '\\,\\Delta x_i'), K('q_' + r + '(\\bar x_i)\\;/\\;' + texInv(u)), K('Q_' + r + '(x_i)')];
+    for (let j = 0; j < show; j++) head.push(stepHead[j]);
+    const tbl = h('table', { class: 'dt conv' });
+    tbl.appendChild(h('thead', {}, h('tr', {}, head.map((x, j) => h('th', { html: x, class: j >= 6 ? 'step' : null })))));
+    const tb = h('tbody');
+    const editNum = (val, onCommit, label) => {
+      const inp = h('input', { type: 'text', inputmode: 'decimal', value: val, 'aria-label': label });
+      inp.addEventListener('change', () => { const v = parseLoose(inp.value); if (isFinite(v)) onCommit(v); else inp.value = val; });
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+      return inp;
+    };
+    const student = (key, truth, label) => {
+      const inp = h('input', { type: 'text', inputmode: 'decimal', value: st.entries[key] != null ? st.entries[key] : '', 'aria-label': label });
+      if (st.marks && st.marks[key] != null) inp.classList.add(st.marks[key] ? 'ok' : 'no');
+      if (st.solClicks >= 2 && (st.entries[key] == null || st.entries[key] === '')) inp.placeholder = truth;
+      inp.addEventListener('input', () => { st.entries[key] = inp.value; inp.classList.remove('ok', 'no'); });
+      return inp;
+    };
+    for (let i = 0; i <= d.n; i++) {
+      const last = i === d.n;
+      const tr = h('tr', { 'data-i': last ? null : i });
+      tr.appendChild(h('td', { class: 'i', text: String(i) }));
+      tr.appendChild(h('td', {}, editNum(xfmt(d.x[i]), (v) => { toMine(); st.mine.limits[i] = v; fixLimits(); refresh(); }, 'x_' + i)));
+      tr.appendChild(last ? h('td', { class: 'blank' }) : h('td', {}, editNum(String(+d.m[i].toPrecision(6)), (v) => { toMine(); st.mine.m[i] = Math.max(0, v); refresh(); }, 'm_' + i)));
+      tr.appendChild(h('td', { text: last ? '' : xfmt(d.xm[i]) }));
+      tr.appendChild(h('td', { text: last ? '' : xfmt(d.dx[i]) }));
+      tr.appendChild(h('td', { text: last ? '' : nf(d.q[i]) }));
+      const vals = [last ? null : w[i], last ? null : wa[i], last ? null : out.q[i], out.Q[i]];
+      const keys = ['w', 'wa', 'q', 'Q'];
+      for (let j = 0; j < show; j++) {
+        if (vals[j] == null) { tr.appendChild(h('td', { class: 'step' })); continue; }
+        if (st.check) tr.appendChild(h('td', { class: 'step' }, student(keys[j] + i, j === 3 ? Qfmt(vals[j]) : nf(vals[j]), keys[j] + '_' + i)));
+        else tr.appendChild(h('td', { class: 'step', text: j === 3 ? Qfmt(vals[j]) : nf(vals[j]) }));
+      }
+      if (!last) tr.addEventListener('mouseenter', () => setHover(i));
+      tb.appendChild(tr);
+    }
+    if (show >= 2) {
+      const tr = h('tr', { class: 'sum' }, [h('td', { colspan: '7', class: 'sumlab', html: K('\\textstyle\\sum = M_{' + k + ',' + l + '}') + (mUnit(u, k) ? ' / ' + K(mUnitTex(u, k)) : '') })]);
+      tr.appendChild(h('td', { class: 'step' }, st.check ? student('M', nf(M), 'M') : h('strong', { text: nf(M) })));
+      for (let j = 2; j < show; j++) tr.appendChild(h('td', { class: 'step' }));
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    tbl.addEventListener('mouseleave', () => setHover(null));
+    tableHost.appendChild(h('div', { class: 'tablewrap' }, tbl));
+    const bar = h('div', { class: 'tablebar' }, [
+      param(null, dd(RS.filter((x) => x !== l).map((x) => ({ v: String(x), label: T('to ', 'nach ') + 'r = ' + x + ' · ' + RNAME(x) })), String(r),
+        (v) => { st.tr = +v; st.entries = {}; st.marks = null; st.solClicks = 0; paintTable(); }, T('Target weighting', 'Zielgewichtung')), 'inline'),
+      st.check ? null : h('button', { type: 'button', class: 'btn primary', text: st.cols < 4 ? T('Next column', 'Nächste Spalte') : T('Start again', 'Von vorn'),
+        onclick: () => { st.cols = st.cols < 4 ? st.cols + 1 : 1; paintTable(); } }),
+      st.check || st.cols >= 4 ? null : h('button', { type: 'button', class: 'btn', text: T('All columns', 'Alle Spalten'), onclick: () => { st.cols = 4; paintTable(); } }),
+      tog(T('Check my table', 'Meine Tabelle prüfen'), st.check, (v) => { st.check = v; st.marks = null; st.solClicks = 0; paintTable(); }, T('Fill in the four new columns yourself', 'Die vier neuen Spalten selbst ausfüllen')),
+      st.check ? h('button', { type: 'button', class: 'btn primary', text: T('Check', 'Prüfen'), onclick: checkTable }) : null,
+      st.check ? h('button', { type: 'button', class: 'btn', text: st.solClicks === 1 ? T('Click again to see all values', 'Nochmals klicken für alle Werte') : T('Show solution', 'Lösung zeigen'),
+        onclick: () => { st.solClicks++; paintTable(); } }) : null]);
+    tableHost.appendChild(bar);
+    if (st.check) tableHost.appendChild(h('div', { class: 'note', html: tableFeedback(k, l, r) }));
+    else {
+      const steps = STEPS(l, r, k, u);
+      tableHost.appendChild(h('div', { class: 'stepnote', html: md(steps[Math.max(0, st.cols - 1)]) }));
+      tableHost.appendChild(h('p', { class: 'note', html: md(T('Edit any $x_i$ or amount $m_{' + l + ',i}$ and the table becomes your own data.', 'Ändern Sie ein $x_i$ oder eine Menge $m_{' + l + ',i}$: Die Tabelle wird zu Ihren eigenen Daten.')) }));
+    }
+  }
+  function fixLimits() {
+    const L = st.mine.limits;
+    for (let i = 1; i < L.length; i++) if (L[i] <= L[i - 1]) L[i] = +(L[i - 1] + Math.max(1e-6, Math.abs(L[i - 1]) * 0.1 || 0.1)).toPrecision(6);
+  }
+  let lastCheck = null;
+  function checkTable() {
+    const D = data(), l = D.l, r = st.tr === l ? (l === 3 ? 0 : 3) : st.tr, k = r - l, d = D.base, out = D.by[r];
+    const w = d.xm.map((x, i) => Math.pow(x, k) * d.q[i]);
+    const near = (v, t, abs) => Math.abs(v - t) <= Math.max(abs || 0, 0.02 * Math.abs(t));
+    const marks = {}, hints = new Set();
+    let right = 0, total = 0;
+    for (const key in st.entries) {
+      const raw = st.entries[key];
+      if (raw == null || String(raw).trim() === '') continue;
+      const v = parseLoose(raw), kind = key.replace(/\d+$/, ''), i = +key.slice(kind.length);
+      const truth = kind === 'w' ? w[i] : kind === 'wa' ? w[i] * d.dx[i] : kind === 'q' ? out.q[i] : kind === 'Q' ? out.Q[i] : out.M;
+      const ok = isFinite(v) && near(v, truth, kind === 'Q' ? 0.002 : 0);
+      marks[key] = ok; total++; if (ok) right++;
+      if (!ok && isFinite(v)) {
+        if ((kind === 'w' || kind === 'wa') && i < d.n) {
+          const f = kind === 'wa' ? d.dx[i] : 1;
+          if (near(v, Math.pow(d.x[i], k) * d.q[i] * f) || near(v, Math.pow(d.x[i + 1], k) * d.q[i] * f)) hints.add('mid');
+          if (l !== 0 && near(v, Math.pow(d.xm[i], r) * d.q[i] * f)) hints.add('exp');
+          if (kind === 'wa' && near(v, w[i])) hints.add('dx');
+        }
+        if (kind === 'q' && near(v, w[i])) hints.add('norm');
+        if (kind === 'q' && near(v, w[i] * d.dx[i] / out.M)) hints.add('qdx');
+        if (kind === 'Q' && i < d.n && near(v, out.Q[i + 1], 0.002)) hints.add('shift');
+        if (kind === 'M' && near(v, w.reduce((a, b) => a + b, 0))) hints.add('dx');
+      }
+    }
+    st.marks = marks;
+    lastCheck = { right: right, total: total, hints: hints };
+    paintTable();
+  }
+  function tableFeedback(k, l, r) {
+    if (st.solClicks >= 2) return md(T('The correct values now appear in grey in every empty cell.', 'Die richtigen Werte stehen jetzt grau in jedem leeren Feld.'));
+    if (st.solClicks === 1) return md(T('Sure? The solution takes away the chance to find the values yourself.', 'Sicher? Die Lösung nimmt Ihnen die Chance, die Werte selbst zu finden.'));
+    if (!st.marks || !lastCheck) return md(T(`Fill in the four new columns and the sum $M_{${k},${l}}$, then press **Check**. Numbers within 2 % count as right; you may type 5e-5 or 5·10^-5.`,
+      `Füllen Sie die vier neuen Spalten und die Summe $M_{${k},${l}}$ aus und drücken Sie **Prüfen**. Zahlen innerhalb von 2 % gelten als richtig; Sie können 5e-5 oder 5·10^-5 tippen.`));
+    const msgs = {
+      mid: T('Weight with the interval mean $\\bar x_i$, not with a limit $x_i$ or $x_{i+1}$.', 'Gewichten Sie mit der Intervallmitte $\\bar x_i$, nicht mit einer Grenze $x_i$ oder $x_{i+1}$.'),
+      exp: T(`The exponent is $r - l = ${k}$, not $r = ${r}$: the start distribution already carries $x^{${l}}$.`, `Der Exponent ist $r - l = ${k}$, nicht $r = ${r}$: Die Ausgangsverteilung trägt schon $x^{${l}}$.`),
+      dx: T('The moment needs the width: multiply each weighted density by $\\Delta x_i$ before adding.', 'Das Moment braucht die Breite: Jede gewichtete Dichte vor dem Addieren mit $\\Delta x_i$ multiplizieren.'),
+      norm: T(`Some $q_${r}$ values are not renormalised: divide by $M_{${k},${l}}$ so that the area is 1.`, `Einige $q_${r}$-Werte sind nicht renormiert: Teilen Sie durch $M_{${k},${l}}$, damit die Fläche 1 ist.`),
+      qdx: T(`That is the share $\\Delta Q_${r}$ of the class. The density divides it by $\\Delta x_i$ again.`, `Das ist der Anteil $\\Delta Q_${r}$ der Klasse. Die Dichte teilt ihn wieder durch $\\Delta x_i$.`),
+      shift: T('$Q_r(x_i)$ counts only the classes **below** $x_i$.', '$Q_r(x_i)$ zählt nur die Klassen **unterhalb** von $x_i$.'),
+    };
+    let s = T(`${lastCheck.right} of ${lastCheck.total} filled cells are right.`, `${lastCheck.right} von ${lastCheck.total} ausgefüllten Feldern sind richtig.`);
+    lastCheck.hints.forEach((key) => { s += ' ' + msgs[key]; });
+    return md(s);
+  }
+
+  /* ---------- results ---------- */
+  let resultsHost = null;
+  function paintResults() {
+    if (!resultsHost) return;
+    const D = data(), u = D.unit, l = D.l;
+    resultsHost.innerHTML = '';
+    const head = [''].concat(RS.map((r) => `<span class="${rcol(r)}" style="color:var(--rc);font-weight:700">r = ${r}</span>`));
+    const rows = [
+      [md(T('median $x_{50,r}$', 'Median $x_{50,r}$'))].concat(RS.map((r) => sig(median(D, r), 3) + ' ' + u)),
+      [md(T('mean $x_{1,r} = M_{1,r}$', 'Mittelwert $x_{1,r} = M_{1,r}$'))].concat(RS.map((r) => sig(meanOf(D, r), 3) + ' ' + u)),
+      [md(T(`moment $M_{${l ? 'r-' + l : 'r'},${l}}$`, `Moment $M_{${l ? 'r-' + l : 'r'},${l}}$`))].concat(RS.map((r) => (r === l ? '1' : nf(moment(D, r - l, l)) + ' ' + mUnit(u, r - l)))),
+    ];
+    resultsHost.appendChild(h('div', { class: 'tablewrap' }, h('div', { html: tableHTML(head, rows).replace('class="dt"', 'class="dt res"') })));
+    const M30 = moment(D, 3, 0), x10 = meanOf(D, 0);
+    resultsHost.appendChild(h('p', { class: 'note', html: md(T(`$M_{3,0}$ = ${nf(M30)} ${mUnit(u, 3)} is the **mean of** $x^3$. It is not the cube of the mean size: $x_{1,0}^3$ = ${nf(Math.pow(x10, 3))} ${mUnit(u, 3)}. The two agree only if all particles have the same size.`,
+      `$M_{3,0}$ = ${nf(M30)} ${mUnit(u, 3)} ist der **Mittelwert von** $x^3$. Es ist nicht die dritte Potenz der mittleren Größe: $x_{1,0}^3$ = ${nf(Math.pow(x10, 3))} ${mUnit(u, 3)}. Beide stimmen nur überein, wenn alle Partikel gleich groß sind.`)) }));
+    resultsHost.appendChild(h('div', { class: 'formulas', html:
+      `<div class="f">${K('q_r(\\bar x_i) = \\frac{\\bar x_i^{\\,r-l}\\,q_l(\\bar x_i)}{M_{r-l,l}},\\qquad M_{k,l} = \\sum_i \\bar x_i^{\\,k}\\,q_l(\\bar x_i)\\,\\Delta x_i', true)}</div>` +
+      `<div class="f deep">${K('q_r(x) = \\frac{x^{r-l}\\,q_l(x)}{M_{r-l,l}},\\qquad M_{k,l} = \\int_{x_\\mathrm{min}}^{x_\\mathrm{max}} x^k q_l(x)\\,\\mathrm{d}x,\\qquad M_{k,r} = \\frac{M_{k+r-l,l}}{M_{r-l,l}}', true)}</div>` +
+      `<p class="note">${md(T('Same particles, different counting: $r = 0$ counts each particle once, $r = 3$ counts it with its volume (or mass). Dividing by the moment makes the area 1 again.',
+        'Dieselben Partikel, anders gezählt: $r = 0$ zählt jedes Partikel einmal, $r = 3$ mit seinem Volumen (oder seiner Masse). Die Division durch das Moment macht die Fläche wieder zu 1.'))}</p>` +
+      `<p class="note deep">${md(T('The last relation gives any moment of $q_r$ from moments of $q_l$, so a single measured distribution yields all means without converting the whole curve.',
+        'Die letzte Beziehung liefert jedes Moment von $q_r$ aus Momenten von $q_l$; eine einzige gemessene Verteilung ergibt so alle Mittelwerte, ohne die ganze Kurve umzurechnen.'))}</p>` }));
+  }
+
+  /* ---------- moment finder ---------- */
+  function jobText(k, l) {
+    const r = l + k;
+    const base = T(`turns $q_${l}$ into $q_${r}$`, `macht aus $q_${l}$ die Dichte $q_${r}$`);
+    const extra = {
+      '1,0': T('It is also the arithmetic mean size $x_{1,0}$.', 'Es ist auch die arithmetische mittlere Größe $x_{1,0}$.'),
+      '2,0': T('It is the mean of $x^2$; for spheres the mean surface is $\\pi M_{2,0}$.', 'Es ist der Mittelwert von $x^2$; für Kugeln ist die mittlere Oberfläche $\\pi M_{2,0}$.'),
+      '3,0': T('It is the mean of $x^3$; for spheres the mean particle volume is $\\bar V = \\frac{\\pi}{6} M_{3,0}$.', 'Es ist der Mittelwert von $x^3$; für Kugeln ist das mittlere Partikelvolumen $\\bar V = \\frac{\\pi}{6} M_{3,0}$.'),
+      '-1,3': T('Its inverse is the Sauter diameter $x_{1,2} = 1/M_{-1,3}$ (lesson 05).', 'Sein Kehrwert ist der Sauterdurchmesser $x_{1,2} = 1/M_{-1,3}$ (Lektion 05).'),
+      '-3,3': T('For spheres $\\frac{6}{\\pi} M_{-3,3}$ is the number of particles per volume of solid.', 'Für Kugeln ist $\\frac{6}{\\pi} M_{-3,3}$ die Partikelzahl pro Feststoffvolumen.'),
+      '1,1': T('It is also the balanced mean $x_{1,1}$.', 'Es ist auch der Schwerpunkt $x_{1,1}$.'),
+      '1,2': T('It is also the balanced mean $x_{1,2}$, the Sauter diameter.', 'Es ist auch der Schwerpunkt $x_{1,2}$, der Sauterdurchmesser.'),
+    }[k + ',' + l];
+    return { base: base, extra: extra || '' };
+  }
+  let quiz = null;
+  function newQuiz(rand) {
+    rand = rand || Math.random;
+    let l, k;
+    do { l = Math.floor(rand() * 4); k = Math.floor(rand() * 7) - 3; } while (k === 0 || l + k < 0 || l + k > 3);
+    const r = l + k;
+    const opts = [{ a: l, b: r, ok: true }, { a: r, b: l }];
+    if (l - k >= 0 && l - k <= 3) opts.push({ a: l, b: l - k });
+    if (k >= 0 && k <= 3 && k !== l) opts.push({ a: k, b: l });
+    if (l !== 0 && k > 0 && k <= 3 && k !== r) opts.push({ a: 0, b: k });
+    RS.filter((t) => t !== l && t !== r).sort((p, q) => Math.abs(p - r) - Math.abs(q - r)).forEach((t) => opts.push({ a: l, b: t }));
+    const seen = new Set(), uniq = [];
+    opts.forEach((o) => { const key = o.a + '>' + o.b; if (o.a !== o.b && !seen.has(key)) { seen.add(key); uniq.push(o); } });
+    return { k: k, l: l, opts: R.shuffle(rand, uniq.slice(0, 4)), pick: null };
+  }
+  function finderCard() {
+    const D = data();
+    const box = h('div');
+    function paint() {
+      box.innerHTML = '';
+      const a = st.mfFrom, b = st.mfTo, k = b - a;
+      const rOpts = RS.map((r) => ({ v: String(r), label: 'q' + sub(r) + ' · ' + RNAME(r) }));
+      box.appendChild(h('div', { class: 'mfrow' }, [
+        param(T('from', 'von'), dd(rOpts, String(a), (v) => { st.mfFrom = +v; paint(); }, T('from weighting', 'von Gewichtung'))),
+        param(T('to', 'nach'), dd(rOpts, String(b), (v) => { st.mfTo = +v; paint(); }, T('to weighting', 'nach Gewichtung')))]));
+      if (k === 0) box.appendChild(h('p', { html: md(T('Same weighting: nothing to convert.', 'Gleiche Gewichtung: Nichts umzurechnen.')) }));
+      else {
+        const j = jobText(k, a), val = moment(D, k, a);
+        box.appendChild(h('div', { class: 'mfans', html: md(T(`From $q_${a}$ to $q_${b}$ you need $M_{${k},${a}}$: multiply by $x^{${k}}$, then divide by $M_{${k},${a}}$.`, `Von $q_${a}$ nach $q_${b}$ brauchen Sie $M_{${k},${a}}$: mit $x^{${k}}$ multiplizieren, dann durch $M_{${k},${a}}$ teilen.`)) }));
+        box.appendChild(h('div', { class: 'f', html: K(`M_{${k},${a}} = \\sum_i \\bar x_i^{\\,${k}}\\,q_${a}(\\bar x_i)\\,\\Delta x_i = ${nf(val).replace('·10', '\\cdot 10^{').replace(/([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/, (m) => m.split('').map((c) => (c === '⁻' ? '-' : '⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c))).join('') + '}')}\\ ${mUnitTex(D.unit, k)}`, true) }));
+        if (j.extra) box.appendChild(h('p', { class: 'note', html: md(j.extra) }));
+      }
+      // reverse quiz
+      if (!quiz) quiz = newQuiz();
+      const qz = h('div', { class: 'mfquiz' }, [h('div', { class: 'h', html: md(T(`Reverse quiz: which job does $M_{${quiz.k},${quiz.l}}$ do?`, `Umgekehrt gefragt: Welche Aufgabe hat $M_{${quiz.k},${quiz.l}}$?`)) })]);
+      const row = h('div', { class: 'row' });
+      quiz.opts.forEach((o) => {
+        const cls = quiz.pick == null ? '' : o.ok ? ' okb' : quiz.pick === o ? ' nob' : '';
+        row.appendChild(h('button', { type: 'button', class: 'btn' + cls, html: md(`$q_${o.a} \\to q_${o.b}$`), onclick: () => { quiz.pick = o; paint(); } }));
+      });
+      qz.appendChild(row);
+      if (quiz.pick) {
+        qz.appendChild(h('div', { class: 'fb ' + (quiz.pick.ok ? 'ok' : 'no'), html: md((quiz.pick.ok ? T('Right. ', 'Richtig. ') : T('Not quite. ', 'Nicht ganz. ')) +
+          T(`$M_{k,l}$ always starts from $q_l$ and adds $k$ to the weighting: $M_{${quiz.k},${quiz.l}}$ ${jobText(quiz.k, quiz.l).base}.`, `$M_{k,l}$ geht immer von $q_l$ aus und erhöht die Gewichtung um $k$: $M_{${quiz.k},${quiz.l}}$ ${jobText(quiz.k, quiz.l).base}.`)) }));
+        qz.appendChild(h('button', { type: 'button', class: 'btn', text: T('Another one', 'Noch eine'), onclick: () => { quiz = newQuiz(); paint(); } }));
+      }
+      box.appendChild(qz);
+    }
+    paint();
+    return card(T('Moment finder', 'Momentfinder'), [box], 'finder');
+  }
+
+  /* ---------- settings ---------- */
+  let settingsHost = null, plot = null, readoutEl = null, mountRoot = null, extraHost = null;
+  const PRESETS = () => [
+    { id: 'numass', label: T('Number or mass?', 'Anzahl oder Masse?') },
+    { id: 'sieve', label: md(T('Sieve analysis: $Q_3$ to $Q_0$', 'Siebanalyse: $Q_3$ nach $Q_0$')) },
+    { id: 'image', label: md(T('Area-weighted image data ($r = 2$)', 'Flächengewichtete Bilddaten ($r = 2$)')) },
+    { id: 'look', label: T('The 60 particles from Look', 'Die 60 Partikel aus Schauen') },
+    { id: 'flyash', label: md(T('Fly ash: $Q_3$ linear, $Q_2$ logarithmic', 'Flugasche: $Q_3$ linear, $Q_2$ logarithmisch')) },
+  ];
+  function setSource(src) {
+    st.src = src; st.hover = null; st.entries = {}; st.marks = null; st.solClicks = 0; st.cols = 1;
+    const D = data();
+    if (st.tr === D.l) st.tr = D.l === 3 ? 0 : 3;
+    st.mfFrom = D.l; st.mfTo = st.tr;
+  }
+  function applyPreset(id) {
+    const keep = st.check;
+    st = defaults(); st.check = keep; st.preset = id;
+    if (id === 'numass') setSource('numass');
+    if (id === 'sieve') { setSource('sieve'); st.tr = 0; st.mfTo = 0; }
+    if (id === 'image') { setSource('image'); st.showq = [true, false, true, false]; st.showQ = [true, false, true, false]; st.tr = 0; st.mfTo = 0; }
+    if (id === 'look') { setSource('look'); st.showq = [false, false, false, false]; st.showQ = [true, true, true, true]; }
+    if (id === 'flyash') { setSource('flyash'); st.showq = [false, false, false, false]; st.showQ = [true, true, true, true]; st.log = true; st.mfFrom = 3; st.mfTo = 2; }
+    quiz = null;
+    remount();
+  }
+  function paintSettings() {
+    if (!settingsHost) return;
+    const D = data();
+    settingsHost.innerHTML = '';
+    settingsHost.appendChild(h('h2', { text: T('Preset experiments', 'Vorbereitete Experimente') }));
+    settingsHost.appendChild(presetBox(PRESETS(), applyPreset, st.preset));
+    settingsHost.appendChild(h('h2', { text: T('Parameters', 'Parameter') }));
+    const srcOpts = [
+      { v: 'numass', label: T('Number or mass? (particle counts)', 'Anzahl oder Masse? (Partikelzahlen)') },
+      { v: 'sieve', label: T('Sieve analysis (mass on each sieve)', 'Siebanalyse (Masse auf jedem Sieb)') },
+      { v: 'image', label: T('Image analysis (projected area per class)', 'Bildanalyse (Projektionsfläche je Klasse)') },
+      { v: 'look', label: T('60 particles (counts)', '60 Partikel (Anzahl)') },
+      { v: 'flyash', label: T('Fly ash (continuous)', 'Flugasche (stetig)') }];
+    if (S.carry) srcOpts.push({ v: 'carry', label: T('From lesson 01', 'Aus Lektion 01') });
+    srcOpts.push({ v: 'mine', label: T('My own table', 'Meine eigene Tabelle'), disabled: !st.mine });
+    settingsHost.appendChild(param(T('Start distribution', 'Ausgangsverteilung'), dd(srcOpts, st.src, (v) => { st.preset = null; setSource(v); remount(); }, T('Start distribution', 'Ausgangsverteilung'))));
+    if (st.src === 'mine') {
+      settingsHost.appendChild(param(md(T('Start weighting $l$: what was measured', 'Ausgangsgewichtung $l$: was gemessen wurde')),
+        dd(rOptions(), String(st.mine.l), (v) => { st.mine.l = +v; setSource('mine'); remount(); }, 'l')));
+    } else {
+      const why = { numass: T(' (particles were counted)', ' (Partikel wurden gezählt)'), look: T(' (particles were counted)', ' (Partikel wurden gezählt)'),
+        sieve: T(' (a sieve weighs mass)', ' (ein Sieb wiegt Masse)'), image: T(' (the software reports area)', ' (die Software gibt Fläche aus)'), flyash: T(' (given as $Q_3$)', ' (als $Q_3$ gegeben)') }[st.src] || '';
+      settingsHost.appendChild(param(md(T('Start weighting $l$', 'Ausgangsgewichtung $l$')), h('div', { class: 'fixed-r', html: md(`$l = ${D.l}$ · ${RNAME(D.l)}${why}`) })));
+    }
+    const rowq = h('div', { class: 'togs' }, RS.map((r) => { const b = tog(md(`$q_${r}$`), st.showq[r], (v) => { st.showq[r] = v; refresh('plot'); }); b.classList.add('rc', rcol(r)); return b; }));
+    const rowQ = h('div', { class: 'togs' }, RS.map((r) => { const b = tog(md(`$Q_${r}$`), st.showQ[r], (v) => { st.showQ[r] = v; refresh('plot'); }); b.classList.add('rc', rcol(r)); return b; }));
+    settingsHost.appendChild(param(T('Show densities', 'Dichten zeigen'), rowq));
+    settingsHost.appendChild(param(T('Show cumulative distributions', 'Verteilungssummen zeigen'), rowQ));
+    settingsHost.appendChild(param(T('Display', 'Anzeige'), h('div', { class: 'togs' }, [
+      tog(md(T('Medians $x_{50,r}$', 'Mediane $x_{50,r}$')), st.medians, (v) => { st.medians = v; refresh('plot'); }),
+      tog(T('log x-axis', 'log. x-Achse'), st.log, (v) => { st.log = v; refresh('plot'); })])));
+    if (st.log && st.showq.some(Boolean)) settingsHost.appendChild(h('div', { class: 'warn', html: md(T('On a log axis the area under each $q_r$ is no longer 1 (lesson 03). Compare positions, not areas.', 'Auf einer log. Achse ist die Fläche unter $q_r$ nicht mehr 1 (Lektion 03). Vergleichen Sie Lagen, nicht Flächen.')) }));
+    settingsHost.appendChild(h('button', { type: 'button', class: 'btn reset', text: T('Return to defaults', 'Auf Standard zurücksetzen'), onclick: () => { st = defaults(); quiz = null; setSource('numass'); remount(); } }));
+  }
+  function setHover(i) {
+    if (st.hover === i) return;
+    st.hover = i;
+    if (plot) plot.render();
+    if (readoutEl) readoutEl.innerHTML = readout(st);
+    if (tableHost) tableHost.querySelectorAll('tr[data-i]').forEach((tr) => tr.classList.toggle('hi', +tr.getAttribute('data-i') === i));
+  }
+  function refresh(parts) {
+    if (plot) plot.render();
+    if (readoutEl) readoutEl.innerHTML = readout(st);
+    if (parts !== 'plot') { paintTable(); paintResults(); paintSettings(); }
+  }
+
+  /* ---------- Look ---------- */
+  function lookNumbers() {
+    const D = data({ src: 'look' }), d0 = D.by[0], d3 = D.by[3];
+    return { n3: d3.dQ[4], n0: d0.dQ[4], f0: d0.dQ[0], f3: d3.dQ[0], x500: median(D, 0), x503: median(D, 3), M30: moment(D, 3, 0), x10: meanOf(D, 0) };
+  }
+  const LOOK = () => {
+    const N = lookNumbers(), p = (v) => fix(100 * v, 0) + ' %';
+    return [
+      { t: T(`Sixty particles from one sample, sorted by size into five classes from 1 to 6 µm. **Counting** them gives the number-weighted density $q_0$: half of the particles lie in the finest class.`,
+        `Sechzig Partikel aus einer Probe, nach Größe in fünf Klassen von 1 bis 6 µm sortiert. **Zählen** ergibt die anzahlgewichtete Dichte $q_0$: Die Hälfte der Partikel liegt in der feinsten Klasse.`),
+        set: (s) => { s.showq = [true, false, false, false]; s.showQ = [false, false, false, false]; s.boxR = 0; } },
+      { t: T(`Counting treats a 1 µm and a 5 µm particle alike. **Weigh** them by volume instead, $x^3$: the 3 largest particles (${p(N.n0)} of the number) hold ${p(N.n3)} of the volume. Darker circles count more.`,
+        `Zählen behandelt ein 1-µm- und ein 5-µm-Partikel gleich. **Wiegt** man sie nach Volumen, $x^3$, enthalten die 3 größten Partikel (${p(N.n0)} der Anzahl) ${p(N.n3)} des Volumens. Dunklere Kreise zählen mehr.`),
+        set: (s) => { s.showq = [false, false, false, true]; s.showQ = [false, false, false, false]; s.boxR = 3; } },
+      { t: T('Length ($r = 1$) and area ($r = 2$) lie in between. The higher $r$, the more the large particles count and the further the density moves to the right. Hover a class to see its four shares.',
+        'Länge ($r = 1$) und Fläche ($r = 2$) liegen dazwischen. Je höher $r$, desto mehr zählen die großen Partikel und desto weiter rückt die Dichte nach rechts. Berühren Sie eine Klasse, um ihre vier Anteile zu sehen.'),
+        set: (s) => { s.showq = [true, true, true, true]; s.showQ = [false, false, false, false]; s.boxR = 2; } },
+      { t: T(`The cumulative distributions show it too: $Q_3$ lies below $Q_0$ everywhere, and the median moves from $x_{50,0}$ = ${sig(N.x500, 3)} µm to $x_{50,3}$ = ${sig(N.x503, 3)} µm.`,
+        `Die Verteilungssummen zeigen es ebenso: $Q_3$ liegt überall unter $Q_0$, und der Median wandert von $x_{50,0}$ = ${sig(N.x500, 3)} µm zu $x_{50,3}$ = ${sig(N.x503, 3)} µm.`),
+        set: (s) => { s.showq = [false, false, false, false]; s.showQ = [true, true, true, true]; s.boxR = 3; } },
+      { t: T(`To convert, multiply $q_0$ by $\\bar x_i^3$, then divide by the sum $M_{3,0}$ so that the area is 1 again: $$q_3(\\bar x_i) = \\frac{\\bar x_i^{3}\\,q_0(\\bar x_i)}{M_{3,0}}$$ $$M_{3,0} = \\sum_i \\bar x_i^{3}\\,q_0(\\bar x_i)\\,\\Delta x_i$$ Here $M_{3,0}$ = ${sig(N.M30, 3)} µm³, the mean of $x^3$ (not $x_{1,0}^3$ = ${sig(Math.pow(N.x10, 3), 3)} µm³).`,
+        `Zum Umrechnen multipliziert man $q_0$ mit $\\bar x_i^3$ und teilt durch die Summe $M_{3,0}$, damit die Fläche wieder 1 ist: $$q_3(\\bar x_i) = \\frac{\\bar x_i^{3}\\,q_0(\\bar x_i)}{M_{3,0}}$$ $$M_{3,0} = \\sum_i \\bar x_i^{3}\\,q_0(\\bar x_i)\\,\\Delta x_i$$ Hier ist $M_{3,0}$ = ${sig(N.M30, 3)} µm³, der Mittelwert von $x^3$ (nicht $x_{1,0}^3$ = ${sig(Math.pow(N.x10, 3), 3)} µm³).`),
+        set: (s) => { s.showq = [true, false, false, true]; s.showQ = [false, false, false, false]; s.boxR = 3; } },
+      { t: T('Your turn: in **Play** you convert a sieve analysis to numbers, fill in the conversion table column by column and find the moment for any change of weighting.',
+        'Jetzt Sie: Unter **Ausprobieren** rechnen Sie eine Siebanalyse in Anzahlen um, füllen die Umrechnungstabelle Spalte für Spalte und finden das Moment für jeden Wechsel der Gewichtung.'),
+        set: (s) => { s.showq = [false, false, false, false]; s.showQ = [true, false, false, true]; s.boxR = 3; }, play: true },
+    ];
+  };
+  function mountLook(root) {
+    const ls = defaults(); ls.src = 'look'; ls.boxR = 0;
+    let step = 0;
+    const steps = LOOK();
+    const left = h('div', { class: 'col' }), right = h('div', { class: 'col' });
+    root.appendChild(h('div', { class: 'grid' }, [left, right]));
+    const boxHost = h('div', { class: 'boxhost' });
+    const boxCap = h('div', { class: 'note' });
+    const lp = wPlot(() => ({ D: data(ls), showq: ls.showq, showQ: ls.showQ, log: false, medians: true, hover: ls.hover }),
+      { onHover: (i) => { if (ls.hover !== i) { ls.hover = i; paintBox(); lp.render(); ro.innerHTML = readout(ls); } } });
+    const ro = h('div', { class: 'readout' });
+    left.appendChild(card(null, [h('div', { class: 'boxplot' }, [h('div', {}, [boxHost, boxCap]), h('div', {}, [lp.el])]), ro]));
+    function paintBox() {
+      boxHost.innerHTML = boxSVG(ls.boxR, ls.hover);
+      boxCap.innerHTML = md(ls.boxR === 0 ? T('every particle counts once', 'jedes Partikel zählt einmal')
+        : T(`shaded by weight $x^{${ls.boxR}}$: darker counts more`, `nach Gewicht $x^{${ls.boxR}}$ getönt: dunkler zählt mehr`));
+    }
+    const stepCard = h('section', { class: 'card steps' });
+    right.appendChild(stepCard);
+    function paint() {
+      const sp = steps[step];
+      sp.set(ls);
+      stepCard.innerHTML = '';
+      stepCard.appendChild(h('h2', { text: T('Look', 'Schauen') }));
+      stepCard.appendChild(h('div', { class: 'stepnum', text: T(`Step ${step + 1} of ${steps.length}`, `Schritt ${step + 1} von ${steps.length}`) }));
+      stepCard.appendChild(h('div', { class: 'dots' }, steps.map((x, i) => h('span', { class: i === step ? 'on' : null }))));
+      stepCard.appendChild(h('div', { class: 'text', html: md(sp.t) }));
+      stepCard.appendChild(h('div', { class: 'nav' }, [
+        h('button', { type: 'button', class: 'btn', text: T('Back', 'Zurück'), disabled: step === 0 ? true : null, onclick: () => { step--; paint(); } }),
+        sp.play ? h('button', { type: 'button', class: 'btn primary', text: T('Go to Play', 'Zu Ausprobieren'), onclick: () => App.setMode('02', 'play') })
+          : h('button', { type: 'button', class: 'btn primary', text: T('Next', 'Weiter'), onclick: () => { step++; paint(); } })]));
+      paintBox();
+      lp.render();
+      ro.innerHTML = readout(ls);
+    }
+    paint();
+  }
+
+  /* ---------- Play ---------- */
+  function remount() { if (mountRoot) { mountRoot.innerHTML = ''; mountPlay(mountRoot); } }
+  const TRY = () => [
+    { t: T('Number or mass: which class holds most of the particles, and which holds most of the mass? Hover the classes.', 'Anzahl oder Masse: Welche Klasse enthält die meisten Partikel, welche die meiste Masse? Berühren Sie die Klassen.'), go: () => applyPreset('numass') },
+    { t: T('Convert the sieve analysis to numbers. What share of all particles is finer than 0.5 mm?', 'Rechnen Sie die Siebanalyse in Anzahlen um. Welcher Anteil aller Partikel ist feiner als 0.5 mm?'), go: () => applyPreset('sieve') },
+    { t: T('Fill in the conversion table from $q_0$ to $q_3$ yourself with **Check my table**.', 'Füllen Sie die Umrechnungstabelle von $q_0$ nach $q_3$ mit **Meine Tabelle prüfen** selbst aus.'), go: () => { applyPreset('look'); st.check = true; remount(); } },
+    { t: T('Which moment turns $q_3$ into $q_2$? Try the moment finder.', 'Welches Moment macht aus $q_3$ die Dichte $q_2$? Probieren Sie den Momentfinder.'), go: () => { applyPreset('flyash'); } },
+    { t: T('Put all particles into one narrow class. What happens to the four medians?', 'Legen Sie alle Partikel in eine schmale Klasse. Was passiert mit den vier Medianen?'), go: () => { applyPreset('look'); toMine(); st.mine.m = [0, 0, 60, 0, 0]; st.mine.limits = [1, 2, 3, 3.2, 5, 6]; remount(); } },
+  ];
+  function mountPlay(root) {
+    mountRoot = root;
+    if (S.carry && S.carry.fresh) { S.carry.fresh = false; st = defaults(); st.preset = null; setSource('carry'); }
+    const plotCol = h('div', { class: 'col a-plot' }), restCol = h('div', { class: 'col a-rest' });
+    settingsHost = h('section', { class: 'card settings a-set' });
+    root.appendChild(h('div', { class: 'grid play' }, [plotCol, settingsHost, restCol]));
+    plot = wPlot(() => ({ D: data(st), showq: st.showq, showQ: st.showQ, log: st.log, medians: st.medians, hover: st.hover }), { onHover: setHover });
+    readoutEl = h('div', { class: 'readout' });
+    plotCol.appendChild(card(null, [plot.el, readoutEl]));
+    tableHost = h('div');
+    restCol.appendChild(card(T('Conversion table', 'Umrechnungstabelle'), [tableHost]));
+    resultsHost = h('div');
+    restCol.appendChild(card(T('Results', 'Ergebnisse'), [resultsHost]));
+    restCol.appendChild(finderCard());
+    restCol.appendChild(card(T('Try this', 'Probieren Sie'), [h('ol', {}, TRY().map((t) => h('li', {}, [h('span', { html: md(t.t) }), h('button', { type: 'button', class: 'btn', text: T('Set up', 'Einstellen'), onclick: t.go })])))], 'try'));
+    paintSettings(); paintTable(); paintResults();
+    readoutEl.innerHTML = readout(st);
+    requestAnimationFrame(() => plot.render());
+  }
+
+  /* ---------- Test yourself ---------- */
+  // a random count table: n classes of equal or doubling width
+  function randCounts(rand, opts) {
+    opts = opts || {};
+    const n = opts.n || R.pick(rand, [4, 5]);
+    const w = R.pick(rand, [1, 2, 5]);
+    const start = opts.start != null ? opts.start : R.pick(rand, [0, 1]), limits = [];
+    for (let i = 0; i <= n; i++) limits.push(start * w + i * w);
+    let m;
+    do { m = limits.slice(1).map((x, i) => Math.max(1, Math.round((opts.falling ? 60 / (i + 1) : 10 + 40 * rand()) * (0.6 + 0.8 * rand())))); } while (opts.falling && m[0] < m[n - 1]);
+    return { limits, m, l: 0, unit: 'µm', d: QMath.discrete(limits, m, 0, 'µm') };
+  }
+  const cTable = (t, extra) => tableHTML(['i', K('x_i\\;/\\;\\mu\\mathrm{m}') + ' ' + T('to', 'bis') + ' ' + K('x_{i+1}'), K('\\bar x_i\\;/\\;\\mu\\mathrm{m}'), T('particles', 'Partikel') + ' ' + K('N_i')].concat(extra ? extra.head : []),
+    t.m.map((m, i) => [String(i), `${xfmt(t.limits[i])} – ${xfmt(t.limits[i + 1])}`, xfmt((t.limits[i] + t.limits[i + 1]) / 2), String(m)].concat(extra ? extra.row(i) : [])));
+  function qPlotFor(t, opts) {
+    opts = opts || {};
+    const g = () => ({ d: opts.d || t.d, r: opts.r || 0, unit: 'µm', munit: '', showQ: false, axisQ: !!opts.axisQ, showq: true, bars: true, log: false, cursors: false, hover: null });
+    return discPlot(g, Object.assign({ height: (w) => Math.round(Math.min(320, Math.max(200, w * 0.48))), noRight: false }, opts.plotOpts || {}));
+  }
+  const GENS = [
+    { id: 'which', calc: false, make: (rand) => {
+      const t = randCounts(rand, { falling: R.pick(rand, [true, false]) });
+      const d0 = t.d, d3 = QMath.convertDiscrete(d0, 3);
+      const aIs3 = rand() < 0.5;
+      const A = aIs3 ? d3 : d0, B = aIs3 ? d0 : d3;
+      const top = niceMax(Math.max.apply(null, d0.q.concat(d3.q)));
+      const mini = () => {
+        const P = Plot({
+          height: (w) => Math.round(Math.min(300, Math.max(200, w * 0.45))),
+          spec: () => ({ x: { min: t.limits[0], max: t.limits[t.limits.length - 1] }, yL: { min: 0, max: top }, small: true }),
+          head: () => `<span>${K('q\\;/\\;\\mu\\mathrm{m}^{-1}')}</span>`,
+          foot: () => `<span></span><span>${K('x\\;/\\;\\mu\\mathrm{m}')}</span>`,
+          draw: (F) => {
+            let s = F.axes();
+            [[A, 'A', 'var(--ink)', '7 4'], [B, 'B', 'var(--muted)', '2 4']].forEach(([d, k, c, dash]) => {
+              let p = `M${F.X(d.x[0])} ${F.y0}`;
+              for (let i = 0; i < d.n; i++) p += `V${F.YL(d.q[i])}H${F.X(d.x[i + 1])}`;
+              p += `V${F.y0}`;
+              s += `<path d="${p}" style="fill:none;stroke:${c};stroke-width:2.2;stroke-dasharray:${dash}"/>`;
+              const im = d.q.indexOf(Math.max.apply(null, d.q));
+              s += `<text class="lab" x="${(F.X(d.x[im]) + F.X(d.x[im + 1])) / 2}" y="${F.YL(d.q[im]) - 6}" text-anchor="middle" style="font-weight:700;fill:${c}">${k}</text>`;
+            });
+            return s;
+          },
+        });
+        requestAnimationFrame(() => P.render());
+        return P.el;
+      };
+      return {
+        kind: 'single',
+        text: T('Both curves describe the same particles: one is the number-weighted density $q_0$, the other the volume-weighted $q_3$. Which one is $q_3$?', 'Beide Kurven beschreiben dieselben Partikel: Eine ist die anzahlgewichtete Dichte $q_0$, die andere die volumengewichtete $q_3$. Welche ist $q_3$?'),
+        mini: mini,
+        choices: [{ html: T('Curve A', 'Kurve A'), correct: aIs3 }, { html: T('Curve B', 'Kurve B'), correct: !aIs3 }].map((c) => Object.assign(c, { why: c.correct ? null : T('This curve has more weight at small sizes: it counts every particle once.', 'Diese Kurve hat mehr Gewicht bei kleinen Größen: Sie zählt jedes Partikel einmal.') })),
+        hint: T('Weighting by $x^3$ makes large particles count far more. Which curve is shifted towards large sizes?', 'Die Gewichtung mit $x^3$ lässt große Partikel viel stärker zählen. Welche Kurve ist zu großen Größen verschoben?'),
+        solution: T(`$q_3$ multiplies $q_0$ by $\\bar x_i^3$ (then renormalises), so it moves weight to the large classes: curve ${aIs3 ? 'A' : 'B'} is $q_3$.`, `$q_3$ multipliziert $q_0$ mit $\\bar x_i^3$ (und renormiert), verschiebt also Gewicht zu den großen Klassen: Kurve ${aIs3 ? 'A' : 'B'} ist $q_3$.`),
+      };
+    } },
+    { id: 'order', calc: false, make: (rand) => {
+      const mono = rand() < 0.25;
+      const t = mono ? (() => { const tt = randCounts(rand, { n: 5 }); const k = R.int(rand, 1, 3); tt.m = tt.m.map((v, i) => (i === k ? v : 0)); tt.d = QMath.discrete(tt.limits, tt.m, 0, 'µm'); return tt; })() : randCounts(rand, { falling: true });
+      const a = R.int(rand, 0, 2), b = R.int(rand, a + 1, 3), what = R.pick(rand, ['mean', 'median']);
+      const sym = (r) => (what === 'mean' ? `x_{1,${r}}` : `x_{50,${r}}`);
+      return {
+        kind: 'single',
+        text: T(`The plot shows the number-weighted density $q_0$ of a sample. Compare $${sym(b)}$ with $${sym(a)}$ of the same sample.`, `Das Diagramm zeigt die anzahlgewichtete Dichte $q_0$ einer Probe. Vergleichen Sie $${sym(b)}$ mit $${sym(a)}$ derselben Probe.`),
+        plot: () => qPlotFor(t),
+        choices: [
+          { html: `$${sym(b)} > ${sym(a)}$`, correct: !mono, why: mono ? T('All particles lie in one class: every weighting counts them the same way.', 'Alle Partikel liegen in einer Klasse: Jede Gewichtung zählt sie gleich.') : null },
+          { html: `$${sym(b)} = ${sym(a)}$`, correct: mono, why: mono ? null : T('The sizes differ, so a higher weighting moves the middle to larger sizes.', 'Die Größen sind verschieden, also verschiebt eine höhere Gewichtung die Mitte zu größeren Größen.') },
+          { html: `$${sym(b)} < ${sym(a)}$`, correct: false, why: T('A higher weighting never favours the small particles.', 'Eine höhere Gewichtung bevorzugt nie die kleinen Partikel.') }],
+        hint: T('A higher $r$ gives large particles more weight. Does this sample have large and small particles?', 'Ein höheres $r$ gibt großen Partikeln mehr Gewicht. Hat diese Probe große und kleine Partikel?'),
+        solution: mono ? T(`All particles lie in one class, so every weighting gives the same distribution: $${sym(b)} = ${sym(a)}$.`, `Alle Partikel liegen in einer Klasse, also liefert jede Gewichtung dieselbe Verteilung: $${sym(b)} = ${sym(a)}$.`)
+          : T(`Going from $r = ${a}$ to $r = ${b}$ multiplies the density by $x^{${b - a}}$, which favours large particles: $${sym(b)} > ${sym(a)}$.`, `Von $r = ${a}$ nach $r = ${b}$ wird die Dichte mit $x^{${b - a}}$ multipliziert, was große Partikel bevorzugt: $${sym(b)} > ${sym(a)}$.`),
+      };
+    } },
+    { id: 'moment', calc: false, make: (rand) => {
+      let l, r;
+      do { l = R.int(rand, 0, 3); r = R.int(rand, 0, 3); } while (l === r);
+      const k = r - l;
+      const cands = [[k, l, true], [l - r, r], [r, l], [k, r], [r, 0]];
+      const seen = new Set(), opts = [];
+      cands.forEach(([a, b, ok]) => { const key = a + ',' + b; if (!seen.has(key) && opts.length < 4) { seen.add(key); opts.push({ a, b, ok: !!ok }); } });
+      return {
+        kind: 'single',
+        text: T(`Which moment do you need to turn $q_${l}$ into $q_${r}$?`, `Welches Moment brauchen Sie, um aus $q_${l}$ die Dichte $q_${r}$ zu machen?`),
+        choices: R.shuffle(rand, opts).map((o) => ({ html: `$M_{${o.a},${o.b}}$`, correct: o.ok,
+          why: o.ok ? null : o.a === l - r && o.b === r ? T(`$M_{${o.a},${o.b}}$ does the reverse job: it turns $q_${r}$ into $q_${l}$.`, `$M_{${o.a},${o.b}}$ erledigt die umgekehrte Aufgabe: Es macht aus $q_${r}$ die Dichte $q_${l}$.`)
+            : T(`$M_{${o.a},${o.b}}$ starts from $q_${o.b}$, not from $q_${l}$.`, `$M_{${o.a},${o.b}}$ geht von $q_${o.b}$ aus, nicht von $q_${l}$.`) })),
+        hint: T('$M_{k,l}$ is a moment **of** $q_l$; the conversion multiplies by $x^{r-l}$.', '$M_{k,l}$ ist ein Moment **von** $q_l$; die Umrechnung multipliziert mit $x^{r-l}$.'),
+        solution: T(`Multiply $q_${l}$ by $x^{${k}}$ and divide by its moment $M_{${k},${l}}$: $$q_${r}(x) = \\frac{x^{${k}}\\,q_${l}(x)}{M_{${k},${l}}}$$`, `Multiplizieren Sie $q_${l}$ mit $x^{${k}}$ und teilen Sie durch sein Moment $M_{${k},${l}}$: $$q_${r}(x) = \\frac{x^{${k}}\\,q_${l}(x)}{M_{${k},${l}}}$$`),
+      };
+    } },
+    { id: 'job', calc: false, make: (rand) => {
+      const qz = newQuiz(rand);
+      return {
+        kind: 'single',
+        text: T(`Which job does the moment $M_{${qz.k},${qz.l}}$ do?`, `Welche Aufgabe hat das Moment $M_{${qz.k},${qz.l}}$?`),
+        choices: qz.opts.map((o) => ({ html: T(`It turns $q_${o.a}$ into $q_${o.b}$.`, `Es macht aus $q_${o.a}$ die Dichte $q_${o.b}$.`), correct: !!o.ok,
+          why: o.ok ? null : T('Read the indices: $M_{k,l}$ is a moment of $q_l$ and raises the weighting by $k$.', 'Lesen Sie die Indizes: $M_{k,l}$ ist ein Moment von $q_l$ und erhöht die Gewichtung um $k$.') })),
+        hint: T('The second index tells you where you start, the first how far the weighting moves.', 'Der zweite Index sagt, wo Sie beginnen, der erste, wie weit sich die Gewichtung verschiebt.'),
+        solution: T(`$M_{${qz.k},${qz.l}}$ is a moment of $q_${qz.l}$ with $k = ${qz.k}$: it ${jobText(qz.k, qz.l).base}. ${jobText(qz.k, qz.l).extra}`, `$M_{${qz.k},${qz.l}}$ ist ein Moment von $q_${qz.l}$ mit $k = ${qz.k}$: Es ${jobText(qz.k, qz.l).base}. ${jobText(qz.k, qz.l).extra}`),
+      };
+    } },
+    { id: 'share', calc: true, make: (rand) => {
+      const n = R.pick(rand, [3, 4]), w = R.pick(rand, [1, 2, 10]);
+      const limits = []; for (let i = 0; i <= n; i++) limits.push(i * w);
+      const m = limits.slice(1).map((x, i) => R.pick(rand, [2, 5, 10, 20, 50, 100, 200, 500]) * (n - i));
+      const t = { limits, m, d: QMath.discrete(limits, m, 0, 'µm') };
+      const k = R.int(rand, 0, n - 1), d3 = QMath.convertDiscrete(t.d, 3);
+      const ans = d3.dQ[k];
+      const xm = t.d.xm, num = m.map((N, i) => N * Math.pow(xm[i], 3)), tot = num.reduce((a, b) => a + b, 0);
+      const upper = m.map((N, i) => N * Math.pow(limits[i + 1], 3)), upTot = upper.reduce((a, b) => a + b, 0);
+      return {
+        kind: 'number',
+        text: T(`Particles were counted in ${n} classes. What fraction of the **volume** (or mass) of the sample lies in class ${k}?`, `Partikel wurden in ${n} Klassen gezählt. Welcher Anteil des **Volumens** (oder der Masse) der Probe liegt in Klasse ${k}?`),
+        table: cTable(t),
+        label: `$\\Delta Q_3$ =`, unit: '', answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - t.d.dQ[k]) <= 0.02 * t.d.dQ[k], msg: T('That is the share of the **number** of particles. Weigh each class with $\\bar x_i^3$.', 'Das ist der Anteil an der **Anzahl** der Partikel. Gewichten Sie jede Klasse mit $\\bar x_i^3$.') },
+          { test: (v) => Math.abs(v - upper[k] / upTot) <= 0.02 * upper[k] / upTot, msg: T('You used the upper limit $x_{i+1}$. Use the class mean $\\bar x_i$.', 'Sie haben die obere Grenze $x_{i+1}$ verwendet. Verwenden Sie die Klassenmitte $\\bar x_i$.') },
+          { test: (v) => Math.abs(v - num[k]) <= 0.02 * num[k], msg: T('Not renormalised: divide by the sum over all classes.', 'Nicht renormiert: Teilen Sie durch die Summe über alle Klassen.') },
+          { test: (v) => Math.abs(v - 100 * ans) <= 2 * ans, msg: T('Looks like a percentage. Give the fraction (0 to 1).', 'Das sieht nach Prozent aus. Geben Sie den Anteil (0 bis 1) an.') }],
+        hint: T('Each particle counts with its volume, $\\propto \\bar x_i^3$. Share of class $k$ = $N_k \\bar x_k^3 / \\sum_i N_i \\bar x_i^3$.', 'Jedes Partikel zählt mit seinem Volumen, $\\propto \\bar x_i^3$. Anteil der Klasse $k$ = $N_k \\bar x_k^3 / \\sum_i N_i \\bar x_i^3$.'),
+        solution: T('Weigh every class with $\\bar x_i^3$ and divide by the sum:', 'Jede Klasse mit $\\bar x_i^3$ gewichten und durch die Summe teilen:') +
+          `$$\\Delta Q_3 = \\frac{N_${k}\\,\\bar x_${k}^3}{\\sum_i N_i\\,\\bar x_i^3} = \\frac{${m[k]} \\times ${xfmt(xm[k])}^3}{${m.map((N, i) => N + '\\times ' + xfmt(xm[i]) + '^3').join(' + ')}} = \\frac{${sig(num[k], 4)}}{${sig(tot, 4)}} = ${sig(ans, 3)}$$`,
+      };
+    } },
+    { id: 'mean', calc: true, make: (rand) => {
+      const t = randCounts(rand, { n: 4, falling: rand() < 0.5 });
+      const d = t.d, ans = QMath.momentDiscrete(d, 1);
+      const lower = t.m.reduce((a, N, i) => a + N * t.limits[i], 0) / d.total, upper = t.m.reduce((a, N, i) => a + N * t.limits[i + 1], 0) / d.total;
+      const plain = d.xm.reduce((a, b) => a + b, 0) / d.n;
+      return {
+        kind: 'number',
+        text: T('Compute the arithmetic mean size $x_{1,0} = M_{1,0}$ of these counted particles.', 'Berechnen Sie die arithmetische mittlere Größe $x_{1,0} = M_{1,0}$ dieser gezählten Partikel.'),
+        table: cTable(t), label: '$x_{1,0}$ =', unit: 'µm', answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - lower) <= 0.01 * lower || Math.abs(v - upper) <= 0.01 * upper, msg: T('You used a class limit. Each class enters with its mean $\\bar x_i$.', 'Sie haben eine Klassengrenze verwendet. Jede Klasse geht mit ihrer Mitte $\\bar x_i$ ein.') },
+          { test: (v) => Math.abs(v - plain) <= 0.005 * plain && Math.abs(plain - ans) > 0.02 * ans, msg: T('You averaged the class means without weights. Each class counts with its number of particles.', 'Sie haben die Klassenmitten ohne Gewichte gemittelt. Jede Klasse zählt mit ihrer Partikelzahl.') }],
+        hint: '$$x_{1,0} = M_{1,0} = \\sum_i \\bar x_i\\,q_0(\\bar x_i)\\,\\Delta x_i = \\frac{\\sum_i N_i\\,\\bar x_i}{\\sum_i N_i}$$',
+        solution: T('Weight each class mean with its count:', 'Jede Klassenmitte mit ihrer Anzahl gewichten:') +
+          `$$x_{1,0} = \\frac{${t.m.map((N, i) => N + '\\times ' + xfmt(d.xm[i])).join(' + ')}}{${d.total}}\\ \\mu\\mathrm{m} = ${sig(ans, 3)}\\ \\mu\\mathrm{m}$$`,
+      };
+    } },
+    { id: 'M30', calc: false, make: (rand) => {
+      const [a, b] = R.pick(rand, [[1, 3], [2, 4], [1, 5], [2, 6], [1, 2], [3, 5]]);
+      const ans = (a * a * a + b * b * b) / 2, wrong = Math.pow((a + b) / 2, 3);
+      return {
+        kind: 'number',
+        text: T(`A sample holds equal numbers of spheres with $x$ = ${a} µm and $x$ = ${b} µm. Compute $M_{3,0}$.`, `Eine Probe enthält gleich viele Kugeln mit $x$ = ${a} µm und $x$ = ${b} µm. Berechnen Sie $M_{3,0}$.`),
+        label: '$M_{3,0}$ =', unit: 'µm³', answer: ans, tol: 0.01,
+        errors: [{ test: (v) => Math.abs(v - wrong) <= 0.01 * wrong, msg: T(`That is $x_{1,0}^3$, the cube of the mean size. $M_{3,0}$ is the **mean of the cubes**.`, `Das ist $x_{1,0}^3$, die dritte Potenz der mittleren Größe. $M_{3,0}$ ist der **Mittelwert der dritten Potenzen**.`) }],
+        hint: T('$M_{3,0}$ is the number-weighted mean of $x^3$.', '$M_{3,0}$ ist der anzahlgewichtete Mittelwert von $x^3$.'),
+        solution: T(`Average the cubes, not the sizes: $$M_{3,0} = \\frac{${a}^3 + ${b}^3}{2}\\ \\mu\\mathrm{m}^3 = ${ans}\\ \\mu\\mathrm{m}^3,\\qquad x_{1,0}^3 = ${(a + b) / 2}^3\\ \\mu\\mathrm{m}^3 = ${wrong}\\ \\mu\\mathrm{m}^3$$ The large spheres dominate the mean volume.`,
+          `Mitteln Sie die dritten Potenzen, nicht die Größen: $$M_{3,0} = \\frac{${a}^3 + ${b}^3}{2}\\ \\mu\\mathrm{m}^3 = ${ans}\\ \\mu\\mathrm{m}^3,\\qquad x_{1,0}^3 = ${(a + b) / 2}^3\\ \\mu\\mathrm{m}^3 = ${wrong}\\ \\mu\\mathrm{m}^3$$ Die großen Kugeln bestimmen das mittlere Volumen.`),
+      };
+    } },
+    { id: 'statements', calc: false, make: (rand) => {
+      const pool = [
+        { t: T('$Q_0(x) \\ge Q_3(x)$ at every size $x$ of the same sample.', '$Q_0(x) \\ge Q_3(x)$ bei jeder Größe $x$ derselben Probe.'), ok: true },
+        { t: T('Converting $q_0$ to $q_3$ and back gives $q_0$ again.', 'Rechnet man $q_0$ nach $q_3$ und zurück, erhält man wieder $q_0$.'), ok: true },
+        { t: T('If all particles have the same size, all medians $x_{50,r}$ are equal.', 'Sind alle Partikel gleich groß, sind alle Mediane $x_{50,r}$ gleich.'), ok: true },
+        { t: T('Counting particles in images gives a distribution with $r = 0$.', 'Das Zählen von Partikeln in Bildern ergibt eine Verteilung mit $r = 0$.'), ok: true },
+        { t: T('$\\bar x_i^3\\,q_0(\\bar x_i)$ is already the density $q_3(\\bar x_i)$.', '$\\bar x_i^3\\,q_0(\\bar x_i)$ ist schon die Dichte $q_3(\\bar x_i)$.'), ok: false, why: T('Its area is $M_{3,0}$, not 1: divide by $M_{3,0}$.', 'Seine Fläche ist $M_{3,0}$, nicht 1: durch $M_{3,0}$ teilen.') },
+        { t: T('$M_{3,0}$ equals $x_{1,0}^3$, the cube of the mean size.', '$M_{3,0}$ ist gleich $x_{1,0}^3$, der dritten Potenz der mittleren Größe.'), ok: false, why: T('$M_{3,0}$ is the mean of $x^3$; it is larger unless all sizes are equal.', '$M_{3,0}$ ist der Mittelwert von $x^3$; er ist größer, außer alle Größen sind gleich.') },
+        { t: T('A sieve analysis gives a number-weighted distribution.', 'Eine Siebanalyse liefert eine anzahlgewichtete Verteilung.'), ok: false, why: T('Sieves are weighed: $r = 3$ (mass).', 'Siebe werden gewogen: $r = 3$ (Masse).') },
+        { t: T('Changing the weighting changes the particles in the sample.', 'Ein Wechsel der Gewichtung ändert die Partikel der Probe.'), ok: false, why: T('The particles stay the same; only how much each one counts changes.', 'Die Partikel bleiben dieselben; nur wie stark jedes zählt, ändert sich.') },
+        { t: T('Going from $q_3$ to $q_0$ needs the moment $M_{3,0}$.', 'Von $q_3$ nach $q_0$ braucht man das Moment $M_{3,0}$.'), ok: false, why: T('It needs $M_{-3,3}$, a moment of the start distribution $q_3$.', 'Man braucht $M_{-3,3}$, ein Moment der Ausgangsverteilung $q_3$.') },
+        { t: T('The finest class always holds the largest share of the mass.', 'Die feinste Klasse enthält immer den größten Massenanteil.'), ok: false, why: T('Often the opposite: many fine particles weigh little.', 'Oft im Gegenteil: Viele feine Partikel wiegen wenig.') },
+      ];
+      let pick;
+      do { pick = R.shuffle(rand, pool).slice(0, 4); } while (!pick.some((p) => p.ok) || pick.every((p) => p.ok));
+      return {
+        kind: 'multi',
+        text: T('Which statements are true?', 'Welche Aussagen sind richtig?'),
+        choices: pick.map((p) => ({ html: p.t, correct: p.ok, why: p.ok ? null : p.why })),
+        hint: T('The particles never change; the weighting only decides how much each one counts. Converting needs a moment of the start distribution.', 'Die Partikel ändern sich nie; die Gewichtung entscheidet nur, wie stark jedes zählt. Umrechnen braucht ein Moment der Ausgangsverteilung.'),
+        solution: pick.map((p) => (p.ok ? '✓ ' : '✗ ') + p.t + (p.why ? ' ' + p.why : '')).join('<br>'),
+      };
+    } },
+    { id: 'sketch3', calc: true, make: (rand) => {
+      const limits = [0, 1, 2, 3, 4], m = R.pick(rand, [[40, 30, 20, 10], [50, 30, 15, 5], [30, 40, 20, 10], [60, 25, 10, 5], [20, 40, 30, 10]]);
+      const t = { limits, m, d: QMath.discrete(limits, m, 0, 'µm') };
+      const d3 = QMath.convertDiscrete(t.d, 3), d = t.d;
+      return {
+        kind: 'sketch',
+        text: T('The bars show the number-weighted density $q_0$ (counts in the table). Drag the points to draw the volume-weighted cumulative distribution $Q_3$ at the class limits.', 'Die Balken zeigen die anzahlgewichtete Dichte $q_0$ (Anzahlen in der Tabelle). Ziehen Sie die Punkte, um die volumengewichtete Verteilungssumme $Q_3$ an den Klassengrenzen zu zeichnen.'),
+        table: cTable(t),
+        plot: (qs) => {
+          if (!qs.pts) qs.pts = d.x.map((x, i) => (i === 0 ? 0 : i === d.n ? 1 : 0.5));
+          const g = () => ({ d: d, r: 0, rQ: 3, unit: 'µm', munit: '', showQ: false, axisQ: true, showq: true, bars: true, log: false, cursors: false, hover: null });
+          const P = discPlot(g, {
+            height: (w) => Math.round(Math.min(340, Math.max(220, w * 0.5))),
+            onDrag: (k, x, p, F) => { const i = +k.slice(1); if (i === 0 || i === d.n) return; qs.pts[i] = Math.round(Math.max(0, Math.min(1, F.invYL(p.py))) * 100) / 100; P.render(); },
+            extra: (F) => {
+              let s = '';
+              if (qs.reveal) s += polyline(d.x.map((x, i) => [F.X(x), F.YL(d3.Q[i])]), 'Qline', 'style="stroke:var(--r3);opacity:.6"');
+              s += polyline(d.x.map((x, i) => [F.X(x), F.YL(qs.pts[i])]), 'Qline', 'style="stroke:var(--r3)"');
+              d.x.forEach((x, i) => { s += `<circle cx="${F.X(x)}" cy="${F.YL(qs.pts[i])}" r="8" data-drag="p${i}" style="fill:var(--surface);stroke:var(--r3);stroke-width:2.5;cursor:ns-resize"/>`; });
+              return s;
+            } });
+          return P;
+        },
+        gradeSketch: (pts) => {
+          const off = pts.map((v, i) => (Math.abs(v - d3.Q[i]) > 0.06 ? i : -1)).filter((i) => i >= 0);
+          if (!off.length) return { ok: true };
+          const asQ0 = pts.every((v, i) => Math.abs(v - d.Q[i]) <= 0.06);
+          return { ok: false, msg: asQ0 ? T('That is $Q_0$, the number-weighted curve. Weigh each class with $\\bar x_i^3$ first.', 'Das ist $Q_0$, die anzahlgewichtete Kurve. Gewichten Sie jede Klasse zuerst mit $\\bar x_i^3$.')
+            : T(`Points ${off.map((i) => 'x' + i).join(', ')} are off. Each step is $N_i \\bar x_i^3 / \\sum N_j \\bar x_j^3$.`, `Die Punkte ${off.map((i) => 'x' + i).join(', ')} liegen daneben. Jede Stufe ist $N_i \\bar x_i^3 / \\sum N_j \\bar x_j^3$.`) };
+        },
+        why: T('Each step of $Q_3$ is the volume share of one class.', 'Jede Stufe von $Q_3$ ist der Volumenanteil einer Klasse.'),
+        hint: T('With $\\bar x_i$ = 0.5, 1.5, 2.5, 3.5 µm the weights $\\bar x_i^3$ are 0.125, 3.375, 15.6, 42.9: the coarse classes dominate.', 'Mit $\\bar x_i$ = 0.5, 1.5, 2.5, 3.5 µm sind die Gewichte $\\bar x_i^3$ gleich 0.125, 3.375, 15.6, 42.9: Die groben Klassen dominieren.'),
+        solution: T('Volume shares $N_i \\bar x_i^3/\\sum$: ', 'Volumenanteile $N_i \\bar x_i^3/\\sum$: ') + d3.dQ.map((v) => fix(v, 3)).join(', ') + '; ' + d3.Q.map((v, i) => `$Q_3(x_${i})$ = ${fix(v, 2)}`).join(', ') + '. ' + T('The true curve is now shown faintly.', 'Die richtige Kurve ist jetzt blass eingezeichnet.'),
+      };
+    } },
+    { id: 'convq', calc: true, make: (rand) => {
+      const limits = R.pick(rand, [[0, 2, 4, 6, 8], [0, 10, 20, 30, 40], [0, 5, 10, 15, 20]]);
+      const sh = R.pick(rand, [[10, 30, 40, 20], [20, 40, 30, 10], [5, 25, 45, 25], [15, 35, 35, 15]]);
+      const dl = QMath.discrete(limits, sh, 3, 'µm');
+      const to = R.pick(rand, [2, 0]), k = to - 3, out = QMath.convertDiscrete(dl, to), j = R.int(rand, 1, 3);
+      const ans = out.q[j], w = dl.xm.map((x, i) => Math.pow(x, k) * dl.q[i]), M = out.M;
+      const tbl = tableHTML(['i', K('\\bar x_i\\;/\\;\\mu\\mathrm{m}'), K('\\Delta x_i\\;/\\;\\mu\\mathrm{m}'), K('q_3(\\bar x_i)\\;/\\;\\mu\\mathrm{m}^{-1}')],
+        dl.xm.map((x, i) => [String(i), xfmt(x), xfmt(dl.dx[i]), sig(dl.q[i], 3)]));
+      return {
+        kind: 'number',
+        text: T(`A mass distribution $q_3$ is given in the table. Compute the ${to === 2 ? 'area' : 'number'}-weighted density $q_${to}(\\bar x_${j})$.`, `Eine Massenverteilung $q_3$ steht in der Tabelle. Berechnen Sie die ${to === 2 ? 'flächen' : 'anzahl'}gewichtete Dichte $q_${to}(\\bar x_${j})$.`),
+        table: tbl, label: `$q_${to}(\\bar x_${j})$ =`, unit: 'µm⁻¹', answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - w[j]) <= 0.02 * Math.abs(w[j]), msg: T(`Not renormalised: divide by $M_{${k},3}$ = ${sig(M, 3)} µm${sup(k)}.`, `Nicht renormiert: Teilen Sie durch $M_{${k},3}$ = ${sig(M, 3)} µm${sup(k)}.`) },
+          { test: (v) => Math.abs(v - out.dQ[j]) <= 0.02 * out.dQ[j], msg: T('That is the share $\\Delta Q$ of the class; the density divides it by $\\Delta x_i$.', 'Das ist der Anteil $\\Delta Q$ der Klasse; die Dichte teilt ihn durch $\\Delta x_i$.') }],
+        hint: T(`$q_${to}(\\bar x_i) = \\bar x_i^{${k}}\\,q_3(\\bar x_i)/M_{${k},3}$ with $M_{${k},3} = \\sum_i \\bar x_i^{${k}}\\,q_3(\\bar x_i)\\,\\Delta x_i$.`, `$q_${to}(\\bar x_i) = \\bar x_i^{${k}}\\,q_3(\\bar x_i)/M_{${k},3}$ mit $M_{${k},3} = \\sum_i \\bar x_i^{${k}}\\,q_3(\\bar x_i)\\,\\Delta x_i$.`),
+        solution: T('First the moment, then the weighted, renormalised density:', 'Zuerst das Moment, dann die gewichtete, renormierte Dichte:') +
+          `$$M_{${k},3} = ${dl.xm.map((x, i) => xfmt(x) + '^{' + k + '}\\times ' + sig(dl.q[i], 3) + '\\times ' + xfmt(dl.dx[i])).join(' + ')} = ${sig(M, 4)}\\ \\mu\\mathrm{m}^{${k}}$$` +
+          `$$q_${to}(\\bar x_${j}) = \\frac{${xfmt(dl.xm[j])}^{${k}}\\times ${sig(dl.q[j], 3)}}{${sig(M, 4)}}\\ \\mu\\mathrm{m}^{-1} = ${sig(ans, 3)}\\ \\mu\\mathrm{m}^{-1}$$`,
+      };
+    } },
+  ];
+
+  App.lesson('02', {
+    ready: true,
+    short: () => T('Weighting', 'Gewichtung'),
+    question: () => T('Count or weigh: does it matter?', 'Zählen oder wiegen: Spielt das eine Rolle?'),
+    sub: () => T('The same particles give different distributions when they are counted by number, length, area or volume. Convert between them with moments.',
+      'Dieselben Partikel ergeben verschiedene Verteilungen, je nachdem ob man sie nach Anzahl, Länge, Fläche oder Volumen zählt. Umgerechnet wird mit Momenten.'),
+    mount: (root, mode) => {
+      plot = null; readoutEl = null; tableHost = null; resultsHost = null; settingsHost = null; mountRoot = null;
+      if (mode === 'look') mountLook(root);
+      else if (mode === 'test') root.appendChild(App.TestPanel('02', GENS));
+      else mountPlay(root);
+    },
+    gens: GENS,
+  });
+})();
 /* ==== part: stubs.js ==== */
 /* Lessons still being built: titles and questions for the start page and the menu. */
 (function () {
@@ -2212,8 +3133,6 @@ var App = (function () {
   const stub = (id, short, q, sub) => App.lesson(id, { ready: false, short: short, question: q, sub: sub, mount: () => {} });
   stub('00', () => T('Shape and size', 'Form und Größe'), () => T('What is the size of a cube?', 'Wie groß ist ein Würfel?'),
     () => T('One particle, several sizes: equivalent diameters, form factors and sphericity.', 'Ein Partikel, mehrere Größen: Äquivalentdurchmesser, Formfaktoren und Sphärizität.'));
-  stub('02', () => T('Weighting', 'Gewichtung'), () => T('Count or weigh: does it matter?', 'Zählen oder wiegen: Spielt das eine Rolle?'),
-    () => T('The weighting index $r$ and how moments convert one weighting into another.', 'Der Mengenartindex $r$ und wie Momente eine Gewichtung in eine andere umrechnen.'));
   stub('03', () => T('Abscissa substitution', 'Abszissentransformation'), () => T('How do areas become sizes?', 'Wie werden aus Flächen Größen?'),
     () => T('From a measured property $\\xi$ to the size $x$, with the factor $\\mathrm{d}\\xi/\\mathrm{d}x$.', 'Von einer Messgröße $\\xi$ zur Größe $x$, mit dem Faktor $\\mathrm{d}\\xi/\\mathrm{d}x$.'));
   stub('04', () => T('Discrete and continuous', 'Diskret und stetig'), () => T('When do bars become a curve?', 'Wann werden Balken zur Kurve?'),
