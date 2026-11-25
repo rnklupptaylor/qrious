@@ -207,6 +207,7 @@ table.dt td.blank{color:var(--muted)}
 .qcard .choice:hover{background:var(--hover)}
 .qcard .choice .mark{flex:none;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--muted);display:inline-flex;align-items:center;justify-content:center;font-size:13px;margin-top:2px}
 .qcard .choice.single .mark{border-radius:50%}
+.qcard .choice .mark{color:transparent}
 .qcard .choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .qcard .choice[aria-pressed="true"] .mark{background:var(--accent);border-color:var(--accent);color:#fff}
 .qcard .choice.ok{border-color:var(--good);background:var(--good-soft)}
@@ -289,6 +290,12 @@ footer a:hover{color:var(--accent)}
   .qmini{grid-template-columns:minmax(0,1fr)}
   main{padding:12px 12px 8px}
   .card{padding:12px}
+}
+@media (max-width:480px){
+  .topbar{gap:8px;padding:8px 12px}
+  .topright > .seg{display:none}
+  .wm svg{height:32px}
+  .topnav select{max-width:none}
 }
 @media (min-width:1700px){body{font-size:17px}}
 </style>
@@ -619,8 +626,14 @@ var QMath = (function () {
   }
   // Inverse-transform sampling with a seeded generator
   function rng(seed) {
-    var s = (seed >>> 0) || 1;
-    return function () { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+    // scramble the seed first, so that neighbouring seeds give unrelated sequences
+    var s = seed >>> 0;
+    s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+    s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+    s = ((s ^ (s >>> 16)) >>> 0) || 1;
+    var f = function () { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+    for (var i = 0; i < 4; i++) f();
+    return f;
   }
   function sampleCont(d, N, rand) {
     // tabulate Q on a fine grid, then invert by interpolation (fast enough for N = 100000)
@@ -993,11 +1006,17 @@ var App = (function () {
       const s = scores()[lessonId];
       scoreBox.innerHTML = `<div class="big">${s && s.tried ? s.solved + ' / ' + s.tried : '–'}</div><p class="muted">${scoreText(lessonId)}</p>`;
     }
+    // every question type comes once (in shuffled order) before any type repeats
+    let bag = [], bagFilter = null;
     function pick() {
       const pool = gens.filter((g) => filter === 'any' || (filter === 'nocalc' ? !g.calc : g.calc));
       const rand = QMath.rng(seed++);
-      let g = pool[Math.floor(rand() * pool.length)];
-      if (current && pool.length > 1 && g.id === current.gen.id) g = pool[(pool.indexOf(g) + 1) % pool.length];
+      if (!bag.length || bagFilter !== filter) {
+        bag = R.shuffle(rand, pool.slice());
+        bagFilter = filter;
+        if (current && bag.length > 1 && bag[bag.length - 1].id === current.gen.id) bag.unshift(bag.pop());
+      }
+      const g = bag.pop();
       current = { gen: g, q: g.make(rand) };
       state = { tries: 0, solved: false, shownSol: false, counted: false, sel: new Set(), value: null, click: null, pts: null };
       paintQ();
@@ -1947,7 +1966,7 @@ var App = (function () {
     opts = opts || {};
     const g = () => ({ d: t.d, r: t.r, unit: t.unit, munit: t.munit, showQ: opts.showQ !== false, showq: !!opts.showq, bars: true, amounts: false, log: false,
       cursors: !!opts.cursors, xa: opts.xa, xb: opts.xb, hover: null });
-    return discPlot(g, Object.assign({ height: (w) => Math.round(Math.min(340, Math.max(210, w * 0.5))) }, opts.plotOpts || {}));
+    return discPlot(g, Object.assign({ height: (w) => Math.round(Math.min(340, Math.max(210, w * 0.5))), noRight: !opts.showq }, opts.plotOpts || {}));
   }
 
   const GENS = [
@@ -2076,7 +2095,8 @@ var App = (function () {
     { id: 'steepest', calc: false, make: (rand) => {
       let t, ok = false;
       for (let tries = 0; tries < 60 && !ok; tries++) {
-        const limits = [0, 1, 3, 4, 8].map((v) => v * R.pick(rand, [1, 2, 5]));
+        const f = R.pick(rand, [1, 2, 5]);
+        const limits = R.pick(rand, [[0, 1, 3, 4, 8], [0, 2, 3, 5, 9], [0, 1, 2, 4, 8], [0, 2, 4, 5, 10], [0, 3, 4, 6, 10]]).map((v) => v * f);
         const m = limits.slice(1).map(() => R.int(rand, 2, 9));
         t = { limits, m, r: 3, unit: 'µm', munit: '', d: QMath.discrete(limits, m, 3, 'µm') };
         const q = t.d.q, dQ = t.d.dQ;
