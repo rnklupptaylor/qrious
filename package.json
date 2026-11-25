@@ -9,6 +9,6 @@
   },
   "scripts": {
     "build": "node tools/build.cjs",
-    "test": "node tests/validate.cjs"
+    "test": "node tests/validate.cjs && node tests/jars.cjs"
   }
 }
