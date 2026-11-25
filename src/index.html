@@ -157,7 +157,7 @@ input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:2
 .plot svg .cursor-knob{fill:var(--surface);stroke:var(--ink);stroke-width:1.5;cursor:ew-resize}
 .plot svg .shade{fill:var(--rc);fill-opacity:.32}
 .plot svg .step{stroke:var(--ink);stroke-width:2}
-.plot svg .guide{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.plot svg .guide{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;fill:none}
 .plot svg .ink{fill:var(--ink)}
 .plot svg .bad{stroke:var(--bad);fill:var(--bad)}
 .legend{display:inline-flex;align-items:center;gap:5px}
@@ -186,7 +186,7 @@ table.dt td.blank{color:var(--muted)}
 .results .k{font-size:13px;color:var(--muted)}
 .results .v{font-family:var(--mono);font-size:17px;font-weight:700}
 .formulas{font-size:15px}
-.formulas .f{margin:4px 0}
+.formulas .f{margin:4px 0;overflow-x:auto;overflow-y:hidden}
 .note{font-size:14px;color:var(--muted);margin-top:8px}
 .warn{font-size:14px;border-left:3px solid var(--r2);padding:4px 10px;background:var(--tint);border-radius:0 8px 8px 0;margin-top:8px}
 .try ol{margin:0;padding-left:20px}
@@ -291,6 +291,28 @@ table.dt.res td:first-child,table.dt.res th:first-child{text-align:left;font-fam
 .mfquiz .btn{margin-top:8px}
 .btn.okb{border-color:var(--good);background:var(--good-soft)}
 .btn.nob{border-color:var(--bad);background:var(--bad-soft)}
+/* lesson 05: the density as a plate on a pivot */
+.plot svg .plate{fill:var(--rc);fill-opacity:.2;stroke:var(--rc);stroke-width:2;stroke-linejoin:round}
+.plot svg .half{fill:var(--rc);fill-opacity:.28;stroke:none}
+.plot svg .beam{fill:var(--ink)}
+.plot svg .pivot{fill:color-mix(in srgb,var(--accent) 30%,var(--surface));stroke:var(--accent);stroke-width:1.6;stroke-linejoin:round}
+.plot svg .pivot.cand{fill:none;stroke-dasharray:4 3}
+.plot svg .floor{stroke:var(--muted);stroke-width:1.5}
+.plot svg .tilt{transition:transform .9s cubic-bezier(.3,1.25,.5,1)}
+.plot svg line.mk{stroke-width:1.3}
+.plot svg line.mk.mode{stroke:var(--muted)}
+.plot svg line.mk.med{stroke:var(--rc);stroke-dasharray:4 3}
+.plot svg line.mk.mean{stroke:var(--ink);stroke-width:1.8}
+.plot svg text.mk.mode{fill:var(--muted)}
+.plot svg text.mk.med{fill:var(--rc);font-weight:700}
+.plot svg text.mk.mean{fill:var(--ink);font-weight:700}
+.plot svg .span{stroke:var(--ink);stroke-width:1.3;fill:none}
+.plot + .plot{margin-top:8px}
+table.dt.kv{min-width:0}
+table.dt.kv td:last-child{text-align:right}
+table.dt.wid{min-width:460px}
+.formulas.sauter .f{margin:2px 0}
+@media (prefers-reduced-motion:reduce){.plot svg .tilt{transition:none}}
 
 /* ---------- responsive ---------- */
 @media (max-width:1560px){
@@ -3125,6 +3147,762 @@ var App = (function () {
     gens: GENS,
   });
 })();
+/* ==== part: lesson05.js ==== */
+/* Lesson 05: Middle and width. The density drawn as a plate on a pivot (balanced mean), mode and median,
+   quantiles read off Q_r, width measures for every r, and the Sauter diameter on its way to S_V. */
+(function () {
+  'use strict';
+  const { T, md, h, card, tog, dd, param, slider, presetBox, Plot, polyline, ticks, sig, fix, rcol, swQ, swq, R, K } = App;
+  const { RNAME, rOptions, niceMax, tableHTML } = App.shared;
+  const RS = [0, 1, 2, 3];
+  const U = 'µm', UT = '\\mu\\mathrm{m}';
+  const C1 = 14, C2 = 36, AXIS = [0, 50];
+  const FLY = () => QMath.uniformQ(1, 100, 3, U);
+  const SUB = ['₀', '₁', '₂', '₃'];
+  const tl = (v) => String(+(+v).toPrecision(6));
+  const num = (v, u) => `<span class="num">${sig(v, 3)}${u === '' ? '' : ' ' + (u || U)}</span>`;
+  const tnum = (v) => String(sig(v, 3));
+  const sx = (k) => `x<tspan dy="3" style="font-size:9.5px">${k}</tspan>`;
+
+  function defaults() {
+    return { preset: 'skew', shape: 'tri', l: 0, skew: 0.6, w: 20, bi: 0, r: 0, all: false, p95: false, pivot: null, psi: 1, rho: 2.5 };
+  }
+  let st = defaults();
+
+  /* ---------- distributions ---------- */
+  const triPts = (c, w, skew) => { const a = c - w / 2, b = c + w / 2; return [[a, 0], [a + w * (0.5 - 0.45 * skew), 1], [b, 0]]; };
+  function baseOf(s) {
+    if (s.shape === 'fly') return FLY();
+    let d = QMath.piecewiseLinear(triPts(C1, s.w, s.skew), s.l, U);
+    if (s.bi > 0) d = QMath.mixture(d, QMath.piecewiseLinear(triPts(C2, s.w, s.skew), s.l, U), 1 - s.bi);
+    return d;
+  }
+  // grid scan: largest value, flat or not, local peaks
+  function scan(d) {
+    const n = 700, xs = [], v = [];
+    for (let i = 0; i <= n; i++) { const x = d.xmin + (d.xmax - d.xmin) * i / n; xs.push(x); v.push(QMath.qCont(d, x)); }
+    let vmax = 0, vmin = Infinity;
+    v.forEach((y) => { if (y > vmax) vmax = y; if (y < vmin) vmin = y; });
+    const flat = vmax - vmin <= 1e-9 * vmax;
+    const peaks = [];
+    if (!flat) for (let i = 0; i <= n; i++) {
+      const l = i > 0 ? v[i - 1] : -Infinity, r = i < n ? v[i + 1] : -Infinity;
+      if (v[i] > l && v[i] >= r && v[i] >= 0.2 * vmax) peaks.push({ x: xs[i], v: v[i] });
+    }
+    peaks.sort((a, b) => b.v - a.v);
+    return { vmax, flat, peaks };
+  }
+  function stats(d) {
+    const sc = scan(d), M1 = QMath.momentCont(d, 1), M2 = QMath.momentCont(d, 2);
+    const s = Math.sqrt(Math.max(0, M2 - M1 * M1)), qn = (P) => QMath.quantileCont(d, P);
+    const o = { M1: M1, M2: M2, x1: M1, s: s, disp: s / M1, qmax: sc.vmax, flat: sc.flat, peaks: sc.peaks,
+      x5: qn(0.05), x10: qn(0.1), x50: qn(0.5), x90: qn(0.9), x95: qn(0.95) };
+    o.mode = sc.flat ? null : QMath.modeCont(d);
+    o.span = o.x90 - o.x10; o.span95 = o.x95 - o.x5; o.pdi = o.disp * o.disp;
+    return o;
+  }
+  let cacheKey = null, cache = null;
+  function data(s) {
+    s = s || st;
+    const key = [s.shape, s.l, s.skew, s.w, s.bi].join('|');
+    if (key === cacheKey) return cache;
+    const b = baseOf(s), by = RS.map((r) => (r === b.r ? b : QMath.convertCont(b, r)));
+    cache = { b: b, by: by, l: b.r, xr: s.shape === 'fly' ? [0, 100] : s.bi > 0 ? AXIS.slice() : [0, 30], stats: by.map(stats) };
+    cacheKey = key;
+    return cache;
+  }
+
+  /* ---------- curves ---------- */
+  function xsFor(d, n) {
+    const out = [];
+    for (let i = 0; i <= n; i++) out.push(d.xmin + (d.xmax - d.xmin) * i / n);
+    if (d.xmin > 0 && d.xmax / d.xmin > 20) for (let i = 0; i <= 80; i++) out.push(d.xmin * Math.pow(d.xmax / d.xmin, i / 80));
+    d.segs.forEach((g) => out.push(g.a, g.b));
+    return out.sort((a, b) => a - b);
+  }
+  const path = (pts) => pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L');
+  const qPts = (F, d, Y) => xsFor(d, 260).map((x) => [F.X(x), Y(QMath.qCont(d, x))]);
+  const QPts = (F, d, xr) => [[F.X(xr[0]), F.YL(0)]].concat(xsFor(d, 260).map((x) => [F.X(x), F.YL(QMath.QCont(d, x))]), [[F.X(xr[1]), F.YL(1)]]);
+
+  /* ---------- the plate on a pivot ----------
+     g = {d, r, sr, others:[{r,d}], xr, top, pivot, show:{mode,med,mean}, shade50, drag, level, noPivot, cand, extra} */
+  function drawPlate(F, g) {
+    const d = g.d, sr = g.sr, yb = F.YR(0), span = g.xr[1] - g.xr[0];
+    let s = '';
+    ticks(0, F.o.yR.max, F.o.small ? 3 : 4).forEach((v) => {
+      const y = F.YR(v);
+      s += `<line class="gridl" x1="${F.x0}" x2="${F.x1}" y1="${y}" y2="${y}"/><line class="axis" x1="${F.x1}" x2="${F.x1 + 4}" y1="${y}" y2="${y}"/><text x="${F.x1 + 7}" y="${y + 4}">${tl(v)}</text>`;
+    });
+    s += `<path class="axis" d="M${F.x1} ${F.y1}V${yb}"/>`;
+    ticks(g.xr[0], g.xr[1], Math.max(3, Math.round((F.x1 - F.x0) / 80))).forEach((v) => {
+      const x = F.X(v);
+      if (x < F.x0 - 0.5 || x > F.x1 + 0.5) return;
+      s += `<line class="axis" x1="${x}" x2="${x}" y1="${F.y0}" y2="${F.y0 + 4}"/><text x="${x}" y="${F.y0 + 17}" text-anchor="middle">${tl(v)}</text>`;
+    });
+    s += `<line class="floor" x1="${F.x0}" x2="${F.x1}" y1="${F.y0}" y2="${F.y0}"/>`;
+    const xp = g.pivot == null ? sr.x1 : g.pivot, px = F.X(xp);
+    let ang = 0;
+    const off = sr.x1 - xp;
+    if (!g.level && Math.abs(off) > 0.004 * span) {
+      const gap = F.y0 - 1 - (yb + 4), arm = off > 0 ? F.X(d.xmax) - px : px - F.X(d.xmin);
+      ang = Math.sign(off) * Math.min(25, Math.asin(Math.min(1, gap / Math.max(arm, 1))) * 180 / Math.PI);
+    }
+    const from = g.animFrom != null ? g.animFrom : ang;
+    s += `<g class="tilt" data-ang="${ang.toFixed(2)}" style="transform-box:view-box;transform-origin:${px.toFixed(1)}px ${yb.toFixed(1)}px;transform:rotate(${from.toFixed(2)}deg)">`;
+    const Yc = (v) => F.YR(Math.min(v, F.o.yR.max * 1.08)); // other weightings may be clipped at the top
+    (g.others || []).forEach((o) => { s += `<g class="${rcol(o.r)}">${polyline(qPts(F, o.d, Yc), 'qline', 'style="opacity:.8"')}</g>`; });
+    const pts = qPts(F, d, F.YR);
+    s += `<g class="${rcol(g.r)}"><path class="plate" d="M${F.X(d.xmin).toFixed(1)} ${yb.toFixed(1)}L${path(pts)}L${F.X(d.xmax).toFixed(1)} ${yb.toFixed(1)}Z"/>`;
+    if (g.shade50) {
+      const hp = xsFor(d, 260).filter((x) => x <= sr.x50).concat([sr.x50]).map((x) => [F.X(x), F.YR(QMath.qCont(d, x))]);
+      s += `<path class="half" d="M${F.X(d.xmin).toFixed(1)} ${yb.toFixed(1)}L${path(hp)}L${F.X(sr.x50).toFixed(1)} ${yb.toFixed(1)}Z"/>`;
+    }
+    s += '</g>';
+    s += `<rect class="beam" x="${(F.X(d.xmin) - 4).toFixed(1)}" y="${yb.toFixed(1)}" width="${(F.X(d.xmax) - F.X(d.xmin) + 8).toFixed(1)}" height="4" rx="1"/>`;
+    const show = g.show || {};
+    const mk = [];
+    if (show.mode && sr.mode != null) mk.push({ x: sr.mode, sub: 'mod,' + g.r, cls: 'mode', row: 2 });
+    if (show.med) mk.push({ x: sr.x50, sub: '50,' + g.r, cls: 'med', row: 1 });
+    if (show.mean) mk.push({ x: sr.x1, sub: '1,' + g.r, cls: 'mean', row: 0 });
+    s += `<g class="${rcol(g.r)}">`;
+    mk.forEach((m) => {
+      const x = F.X(m.x), y = F.y1 - 6 - 13 * m.row, end = x > F.x1 - 70;
+      s += `<line class="mk ${m.cls}" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${yb.toFixed(1)}" y2="${(y + 3).toFixed(1)}"/>`;
+      s += `<text class="lab mk ${m.cls}" x="${(end ? x - 4 : x + 4).toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${end ? 'end' : 'start'}">${sx(m.sub)}</text>`;
+    });
+    s += '</g></g>';
+    const pa = yb + 4, pb = F.y0 - 1, hw = Math.max(8, Math.min(14, (pb - pa) * 0.4));
+    if (g.cand != null) {
+      const cx = F.X(g.cand);
+      s += `<path class="pivot cand" d="M${cx.toFixed(1)} ${pa.toFixed(1)}L${(cx - hw).toFixed(1)} ${pb.toFixed(1)}L${(cx + hw).toFixed(1)} ${pb.toFixed(1)}Z"/>`;
+    }
+    if (!g.noPivot) {
+      s += `<path class="pivot" d="M${px.toFixed(1)} ${pa.toFixed(1)}L${(px - hw).toFixed(1)} ${pb.toFixed(1)}L${(px + hw).toFixed(1)} ${pb.toFixed(1)}Z"/>`;
+      if (g.drag) s += `<rect data-drag="pivot" x="${(px - 18).toFixed(1)}" y="${(pa - 6).toFixed(1)}" width="36" height="${(pb - pa + 10).toFixed(1)}" style="fill:transparent;cursor:ew-resize"/>`;
+    }
+    if (g.extra) s += g.extra(F);
+    return s;
+  }
+  function platePlot(get, opt) {
+    opt = opt || {};
+    let animate = false;
+    const P = Plot({
+      height: (w) => Math.round(Math.min(opt.maxH || 330, Math.max(opt.minH || 210, w * (opt.ratio || 0.42)))),
+      spec: () => { const g = get(); return { x: { min: g.xr[0], max: g.xr[1] }, yL: { min: 0, max: 1, ticks: [] }, yR: { min: -0.24 * g.top, max: g.top, ticks: [] }, pad: { l: 44, r: 50, t: 44, b: 28 }, small: !!opt.small }; },
+      head: () => {
+        const g = get(), rs = [g.r].concat((g.others || []).map((o) => o.r)).sort();
+        return `<span class="note">${opt.headNote ? opt.headNote() : ''}</span><span class="ax">${rs.map((r) => `<span class="ax ${rcol(r)}">${swq(r, r === g.r)}${K('q_' + r)}</span>`).join(' ')}${K('\\;/\\;' + UT + '^{-1}')}</span>`;
+      },
+      foot: () => `<span class="note">${opt.footNote ? opt.footNote() : ''}</span><span>${K('x\\;/\\;' + UT)}</span>`,
+      aria: () => T('Density drawn as a plate resting on a pivot', 'Dichte als Platte auf einem Drehpunkt'),
+      draw: (F) => { const g = get(); if (animate) g.animFrom = 0; return drawPlate(F, g); },
+      onDrag: opt.onPivot ? (k, x) => opt.onPivot(x) : null,
+      onClick: (x, p, F) => {
+        if (opt.onPivot && p.py > F.YR(0)) opt.onPivot(x);
+        else if (opt.onClick) opt.onClick(x, p, F);
+      },
+    });
+    P.show = (anim) => {
+      animate = !!anim; P.render(); animate = false;
+      if (!anim) return;
+      const t = P.el.querySelector('g.tilt');
+      if (t) requestAnimationFrame(() => requestAnimationFrame(() => { t.style.transform = 'rotate(' + t.getAttribute('data-ang') + 'deg)'; }));
+    };
+    return P;
+  }
+
+  /* ---------- Q_r with quantile guides ---------- */
+  function drawCum(F, g) {
+    let s = F.axes();
+    (g.others || []).forEach((o) => { s += `<g class="${rcol(o.r)}">${polyline(QPts(F, o.d, g.xr), 'Qline', 'style="opacity:.55;stroke-width:1.6"')}</g>`; });
+    s += `<g class="${rcol(g.r)}">${polyline(QPts(F, g.d, g.xr), 'Qline')}`;
+    if (g.guides) {
+      const sr = g.sr, r = g.r;
+      const list = [[0.1, sr.x10, '10'], [0.5, sr.x50, '50'], [0.9, sr.x90, '90']];
+      if (g.p95) list.push([0.05, sr.x5, '5'], [0.95, sr.x95, '95']);
+      list.sort((a, b) => a[1] - b[1]);
+      let lastX = -1e9, row = 0;
+      list.forEach(([P, x, k]) => {
+        const X = F.X(x);
+        s += `<path class="guide" d="M${F.x0} ${F.YL(P).toFixed(1)}H${X.toFixed(1)}V${F.y0}"/><circle class="pt" cx="${X.toFixed(1)}" cy="${F.YL(P).toFixed(1)}" r="3.4"/>`;
+        row = X - lastX < 46 ? row + 1 : 0; lastX = X;
+        s += `<text class="lab" x="${(X + 3).toFixed(1)}" y="${(F.y0 - 6 - 13 * row).toFixed(1)}" style="fill:var(--rc);font-weight:700">${sx(k + ',' + r)}</text>`;
+      });
+      const a = F.X(sr.x10), b = F.X(sr.x90), yb = F.y1 - 12;
+      s += `<path class="span" d="M${a.toFixed(1)} ${yb + 6}V${yb}H${b.toFixed(1)}V${yb + 6}"/>`;
+      s += `<text class="lab" x="${((a + b) / 2).toFixed(1)}" y="${yb - 4}" text-anchor="middle">${sx('90,' + r)}<tspan dy="-3"> − x</tspan><tspan dy="3" style="font-size:9.5px">10,${r}</tspan><tspan dy="-3"> = ${tnum(sr.span)} ${U}</tspan></text>`;
+    }
+    s += '</g>';
+    if (g.extra) s += g.extra(F);
+    return s;
+  }
+  function cumPlot(get, opt) {
+    opt = opt || {};
+    return Plot({
+      height: (w) => Math.round(Math.min(opt.maxH || 250, Math.max(opt.minH || 170, w * (opt.ratio || 0.3)))),
+      spec: () => { const g = get(); return { x: { min: g.xr[0], max: g.xr[1] }, yL: { min: 0, max: 1 }, pad: { t: g.guides ? 32 : 10, r: 50 }, small: !!opt.small }; },
+      head: () => {
+        const g = get(), rs = [g.r].concat((g.others || []).map((o) => o.r)).sort();
+        return `<span class="ax">${rs.map((r) => `<span class="ax ${rcol(r)}">${swQ(r)}${K('Q_' + r)}</span>`).join(' ')}${K('\\;/\\;\\text{–}')}</span><span></span>`;
+      },
+      foot: () => `<span></span><span>${K('x\\;/\\;' + UT)}</span>`,
+      aria: () => T('Cumulative distribution with quantiles', 'Verteilungssumme mit Quantilen'),
+      draw: (F) => drawCum(F, get()),
+      onClick: opt.onClick,
+    });
+  }
+
+  /* ---------- texts ---------- */
+  function orderText(sr, r, span) {
+    if (sr.mode == null) return T(`$q_${r}$ is flat: every size in its range is equally frequent, so there is no single mode. Median and mean coincide.`,
+      `$q_${r}$ ist flach: Jede Größe im Bereich ist gleich häufig, es gibt keinen einzelnen Modalwert. Median und Mittelwert fallen zusammen.`);
+    const e = 0.004 * span, a = sr.mode, b = sr.x50, c = sr.x1;
+    let t;
+    if (Math.abs(a - b) < e && Math.abs(b - c) < e) t = T('Mode, median and balanced mean coincide: the density is symmetric.', 'Modalwert, Median und Schwerpunkt fallen zusammen: Die Dichte ist symmetrisch.');
+    else if (a < b && b < c) t = T(`$x_{\\mathrm{mod},${r}} < x_{50,${r}} < x_{1,${r}}$: the long tail lies on the right and pulls the mean furthest.`, `$x_{\\mathrm{mod},${r}} < x_{50,${r}} < x_{1,${r}}$: Der lange Ausläufer liegt rechts und zieht den Mittelwert am weitesten mit.`);
+    else if (c < b && b < a) t = T(`$x_{1,${r}} < x_{50,${r}} < x_{\\mathrm{mod},${r}}$: the long tail lies on the left and pulls the mean furthest.`, `$x_{1,${r}} < x_{50,${r}} < x_{\\mathrm{mod},${r}}$: Der lange Ausläufer liegt links und zieht den Mittelwert am weitesten mit.`);
+    else t = T('The three middles do not follow the one-hump order: here "the middle" depends on the question you ask.', 'Die drei Mitten folgen nicht der Reihenfolge einer einzelnen Spitze: Hier hängt „die Mitte“ von der Frage ab.');
+    if (sr.peaks.length >= 2) t += ' ' + T(`$q_${r}$ has two humps, with peaks near ${num(sr.peaks[0].x)} and ${num(sr.peaks[1].x)}.`, `$q_${r}$ hat zwei Spitzen, bei etwa ${num(sr.peaks[0].x)} und ${num(sr.peaks[1].x)}.`);
+    return t;
+  }
+  function pivotText(sr, xp, r, span) {
+    if (xp == null || Math.abs(xp - sr.x1) <= 0.004 * span) return T(`The plate balances on $x_{1,${r}}$.`, `Die Platte ist auf $x_{1,${r}}$ im Gleichgewicht.`);
+    return T(`Pivot at ${num(xp)}: the plate tips to the ${sr.x1 > xp ? 'right' : 'left'}.`, `Drehpunkt bei ${num(xp)}: Die Platte kippt nach ${sr.x1 > xp ? 'rechts' : 'links'}.`);
+  }
+
+  /* ---------- Look ---------- */
+  const LOOK = () => {
+    const D = data(defaults()), s0 = D.stats[0], s3 = D.stats[3];
+    return [
+      { t: T(`This is the number density $q_0$ of a sample, cut out of sheet metal and laid on a beam. Where must the pivot go so that it stays level? Try the **mode** $x_{\\mathrm{mod},0}$ = ${num(s0.mode)}, the most frequent size: the plate tips to the right.`,
+        `Das ist die Anzahldichte $q_0$ einer Probe, aus Blech ausgeschnitten und auf einen Balken gelegt. Wo muss der Drehpunkt hin, damit sie waagerecht bleibt? Versuchen Sie den **Modalwert** $x_{\\mathrm{mod},0}$ = ${num(s0.mode)}, die häufigste Größe: Die Platte kippt nach rechts.`),
+        set: (s) => { s.r = 0; s.ghost = null; s.at = 'mode'; s.show = { mode: true }; s.shade50 = false; s.guides = false; } },
+      { t: T(`Try the **median** $x_{50,0}$ = ${num(s0.x50)}: half of the particles lie on each side (the shaded half of the area). It still tips: the particles in the long tail sit on a longer lever arm.`,
+        `Versuchen Sie den **Median** $x_{50,0}$ = ${num(s0.x50)}: Auf jeder Seite liegt die Hälfte der Partikel (die schattierte Hälfte der Fläche). Sie kippt trotzdem: Die Partikel im langen Ausläufer sitzen an einem längeren Hebel.`),
+        set: (s) => { s.r = 0; s.ghost = null; s.at = 'median'; s.show = { mode: true, med: true }; s.shade50 = true; s.guides = false; } },
+      { t: T(`Only on the **balanced mean** $x_{1,0}$ = ${num(s0.x1)} does the plate stay level. It is the centre of mass of the density: $$x_{1,0} = M_{1,0} = \\int x\\,q_0(x)\\,\\mathrm{d}x$$ With the tail on the right, $x_{\\mathrm{mod},0} < x_{50,0} < x_{1,0}$. Drag the pivot to feel it.`,
+        `Nur auf dem **Schwerpunkt** $x_{1,0}$ = ${num(s0.x1)} bleibt die Platte waagerecht. Er ist der Schwerpunkt der Dichte: $$x_{1,0} = M_{1,0} = \\int x\\,q_0(x)\\,\\mathrm{d}x$$ Mit dem Ausläufer rechts gilt $x_{\\mathrm{mod},0} < x_{50,0} < x_{1,0}$. Ziehen Sie den Drehpunkt, um es zu spüren.`),
+        set: (s) => { s.r = 0; s.ghost = null; s.at = 'mean'; s.show = { mode: true, med: true, mean: true }; s.shade50 = false; s.guides = false; } },
+      { t: T(`Quantiles come from $Q_0$: go across at 0.1, 0.5 and 0.9, then down to $x_{10,0}$, $x_{50,0}$ and $x_{90,0}$. The span $x_{90,0} - x_{10,0}$ = ${num(s0.span)} measures the width; so does the standard deviation $s_0$ = ${num(s0.s)}.`,
+        `Quantile liest man an $Q_0$ ab: waagerecht bei 0.1, 0.5 und 0.9, dann hinunter zu $x_{10,0}$, $x_{50,0}$ und $x_{90,0}$. Die Spanne $x_{90,0} - x_{10,0}$ = ${num(s0.span)} misst die Breite, ebenso die Standardabweichung $s_0$ = ${num(s0.s)}.`),
+        set: (s) => { s.r = 0; s.ghost = null; s.at = 'mean'; s.show = { mode: true, med: true, mean: true }; s.shade50 = false; s.guides = true; } },
+      { t: T(`Weigh the same particles by volume: $q_3$ (dashed: $q_0$). Every middle moves right, $x_{1,3}$ = ${num(s3.x1)} instead of ${num(s0.x1)}, and the order turns round: $x_{1,3} < x_{50,3} < x_{\\mathrm{mod},3}$. Each weighting has its own middle, so always quote $r$.`,
+        `Wiegen Sie dieselben Partikel nach Volumen: $q_3$ (gestrichelt: $q_0$). Jede Mitte rückt nach rechts, $x_{1,3}$ = ${num(s3.x1)} statt ${num(s0.x1)}, und die Reihenfolge kehrt sich um: $x_{1,3} < x_{50,3} < x_{\\mathrm{mod},3}$. Jede Gewichtung hat ihre eigene Mitte; geben Sie $r$ immer an.`),
+        set: (s) => { s.r = 3; s.ghost = 0; s.at = 'mean'; s.show = { mode: true, med: true, mean: true }; s.shade50 = false; s.guides = true; } },
+      { t: T('Your turn: in **Play** you shape the distribution with sliders, compare the width of all four weightings and follow the Sauter diameter $x_{1,2}$ to the specific surface area.',
+        'Jetzt Sie: Unter **Ausprobieren** formen Sie die Verteilung mit Schiebern, vergleichen die Breite aller vier Gewichtungen und folgen dem Sauterdurchmesser $x_{1,2}$ bis zur spezifischen Oberfläche.'),
+        set: (s) => { s.r = 0; s.ghost = 3; s.at = 'mean'; s.show = { mode: true, med: true, mean: true }; s.shade50 = false; s.guides = true; }, play: true },
+    ];
+  };
+  function mountLook(root) {
+    const ls = defaults();
+    let step = 0;
+    const steps = LOOK();
+    const left = h('div', { class: 'col' }), right = h('div', { class: 'col' });
+    root.appendChild(h('div', { class: 'grid' }, [left, right]));
+    const pivotOf = (sr) => (ls.at === 'mode' ? sr.mode : ls.at === 'median' ? sr.x50 : ls.at === 'drag' ? ls.pivot : sr.x1);
+    const gl = () => {
+      const D = data(ls), sr = D.stats[ls.r];
+      const others = ls.ghost != null ? [{ r: ls.ghost, d: D.by[ls.ghost] }] : [];
+      return { d: D.by[ls.r], r: ls.r, sr: sr, others: others, xr: D.xr, top: niceMax(Math.max(sr.qmax, ls.ghost != null ? D.stats[ls.ghost].qmax : 0)),
+        pivot: pivotOf(sr), show: ls.show, shade50: ls.shade50, guides: ls.guides, drag: true };
+    };
+    const ro = h('div', { class: 'readout' });
+    const paintRo = () => {
+      const D = data(ls), sr = D.stats[ls.r], r = ls.r;
+      ro.innerHTML = md(pivotText(sr, pivotOf(sr), r, D.xr[1] - D.xr[0]) + ' ' + T('Drag the pivot or tap below the beam.', 'Ziehen Sie den Drehpunkt oder tippen Sie unter den Balken.'));
+    };
+    const pp = platePlot(gl, { onPivot: (x) => {
+      const D = data(ls), d = D.by[ls.r], sr = D.stats[ls.r], span = D.xr[1] - D.xr[0];
+      x = Math.min(d.xmax - 0.02 * span, Math.max(d.xmin + 0.02 * span, x));
+      ls.at = Math.abs(x - sr.x1) < 0.015 * span ? 'mean' : 'drag'; ls.pivot = x;
+      pp.show(false); paintRo();
+    } });
+    const cp = cumPlot(gl);
+    left.appendChild(card(null, [pp.el, cp.el, ro]));
+    const stepCard = h('section', { class: 'card steps' });
+    right.appendChild(stepCard);
+    function paint() {
+      const sp = steps[step];
+      sp.set(ls);
+      stepCard.innerHTML = '';
+      stepCard.appendChild(h('h2', { text: T('Look', 'Schauen') }));
+      stepCard.appendChild(h('div', { class: 'stepnum', text: T(`Step ${step + 1} of ${steps.length}`, `Schritt ${step + 1} von ${steps.length}`) }));
+      stepCard.appendChild(h('div', { class: 'dots' }, steps.map((x, i) => h('span', { class: i === step ? 'on' : null }))));
+      stepCard.appendChild(h('div', { class: 'text', html: md(sp.t) }));
+      stepCard.appendChild(h('div', { class: 'nav' }, [
+        h('button', { type: 'button', class: 'btn', text: T('Back', 'Zurück'), disabled: step === 0 ? true : null, onclick: () => { step--; paint(); } }),
+        sp.play ? h('button', { type: 'button', class: 'btn primary', text: T('Go to Play', 'Zu Ausprobieren'), onclick: () => App.setMode('05', 'play') })
+          : h('button', { type: 'button', class: 'btn primary', text: T('Next', 'Weiter'), onclick: () => { step++; paint(); } })]));
+      pp.show(true); cp.render(); paintRo();
+    }
+    paint();
+  }
+
+  /* ---------- Play ---------- */
+  let settingsHost = null, plate = null, cum = null, readoutEl = null, mountRoot = null, middleHost = null, widthHost = null, sauterHost = null;
+  const PRESETS = () => [
+    { id: 'skew', label: T('Right-skewed sample', 'Rechtsschiefe Probe') },
+    { id: 'sym', label: T('Symmetric by number', 'Symmetrisch nach Anzahl') },
+    { id: 'narrow', label: T('Narrow: does weighting matter?', 'Schmal: Spielt die Gewichtung eine Rolle?') },
+    { id: 'bimodal', label: T('Bimodal: where is the middle?', 'Bimodal: Wo ist die Mitte?') },
+    { id: 'fly', label: md(T('Fly ash: $Q_3$ linear from 1 to 100 µm', 'Flugasche: $Q_3$ linear von 1 bis 100 µm')) },
+    { id: 'width', label: T('Same particles, different width', 'Dieselben Partikel, andere Breite') },
+  ];
+  function applyPreset(id) {
+    const keep = { psi: st.psi, rho: st.rho };
+    st = defaults(); Object.assign(st, keep); st.preset = id;
+    if (id === 'sym') { st.skew = 0; st.w = 16; }
+    if (id === 'narrow') { st.w = 3; st.all = true; }
+    if (id === 'bimodal') { st.skew = 0; st.w = 10; st.bi = 0.4; }
+    if (id === 'fly') { st.shape = 'fly'; st.r = 3; st.rho = 2.3; }
+    if (id === 'width') { st.shape = 'fly'; st.r = 2; st.all = true; st.rho = 2.3; }
+    remount();
+  }
+  function plateGet() {
+    const D = data(), sr = D.stats[st.r];
+    const others = st.all ? RS.filter((r) => r !== st.r).map((r) => ({ r: r, d: D.by[r] })) : [];
+    const all = Math.max.apply(null, (st.all ? RS : [st.r]).map((r) => D.stats[r].qmax));
+    return { d: D.by[st.r], r: st.r, sr: sr, others: others, xr: D.xr, top: niceMax(all > 2.5 * sr.qmax ? sr.qmax : all),
+      pivot: st.pivot, show: { mode: true, med: true, mean: true }, guides: true, p95: st.p95, drag: true };
+  }
+  function readout() {
+    const D = data(), sr = D.stats[st.r], r = st.r;
+    return md(`$x_{\\mathrm{mod},${r}}$ = ${sr.mode == null ? '–' : num(sr.mode)} · $x_{50,${r}}$ = ${num(sr.x50)} · $x_{1,${r}}$ = ${num(sr.x1)} · ` + pivotText(sr, st.pivot, r, D.xr[1] - D.xr[0]));
+  }
+  function paintSettings() {
+    if (!settingsHost) return;
+    const D = data();
+    settingsHost.innerHTML = '';
+    settingsHost.appendChild(h('h2', { text: T('Preset experiments', 'Vorbereitete Experimente') }));
+    settingsHost.appendChild(presetBox(PRESETS(), applyPreset, st.preset));
+    settingsHost.appendChild(h('h2', { text: T('Parameters', 'Parameter') }));
+    settingsHost.appendChild(param(T('Distribution', 'Verteilung'), dd([
+      { v: 'tri', label: T('Piecewise linear: one or two humps', 'Stückweise linear: eine oder zwei Spitzen') },
+      { v: 'fly', label: T('Fly ash: Q₃ linear from 1 to 100 µm', 'Flugasche: Q₃ linear von 1 bis 100 µm') }], st.shape,
+    (v) => { st.shape = v; st.preset = null; st.pivot = null; remount(); }, T('Distribution', 'Verteilung'))));
+    if (st.shape === 'tri') {
+      settingsHost.appendChild(param(md(T('The shape describes', 'Die Form beschreibt')), dd(RS.map((l) => ({ v: String(l), label: 'q' + SUB[l] + ' · ' + RNAME(l) })), String(st.l),
+        (v) => { st.l = +v; st.preset = null; st.pivot = null; refresh(); }, T('The shape describes', 'Die Form beschreibt'))));
+      const sl = (o) => slider(Object.assign({ onInput: (v) => { st[o.key] = v; st.preset = null; st.pivot = null; refresh('noSettings'); } }, o));
+      settingsHost.appendChild(sl({ key: 'skew', label: md(T('Skewness: tail to the right (+) or left (−)', 'Schiefe: Ausläufer rechts (+) oder links (−)')), labelText: T('skewness', 'Schiefe'), min: -1, max: 1, step: 0.05, value: st.skew, digits: 2 }));
+      settingsHost.appendChild(sl({ key: 'w', label: md(T('Width of each hump $w$', 'Breite jeder Spitze $w$')), labelText: 'w', min: 2, max: 24, step: 0.5, value: st.w, unit: U, digits: 1 }));
+      settingsHost.appendChild(sl({ key: 'bi', label: md(T('Bimodality: share of the second hump', 'Bimodalität: Anteil der zweiten Spitze')), labelText: T('bimodality', 'Bimodalität'), min: 0, max: 0.6, step: 0.05, value: st.bi, digits: 2 }));
+    } else {
+      settingsHost.appendChild(param(md(T('Given as', 'Gegeben als')), h('div', { class: 'fixed-r', html: md(T('$Q_3$ rising linearly, so $q_3$ is constant', '$Q_3$ steigt linear, also ist $q_3$ konstant')) })));
+    }
+    settingsHost.appendChild(param(md(T('Weighting shown $r$', 'Gezeigte Gewichtung $r$')), dd(rOptions(), String(st.r), (v) => { st.r = +v; st.pivot = null; refresh(); if (plate) plate.show(false); }, 'r')));
+    settingsHost.appendChild(param(T('Display', 'Anzeige'), h('div', { class: 'togs' }, [
+      tog(md(T('All $r$ side by side', 'Alle $r$ nebeneinander')), st.all, (v) => { st.all = v; refresh('noSettings'); }),
+      tog(md(T('$x_{95,r} - x_{5,r}$ too', 'auch $x_{95,r} - x_{5,r}$')), st.p95, (v) => { st.p95 = v; refresh('noSettings'); })])));
+    settingsHost.appendChild(h('button', { type: 'button', class: 'btn reset', text: T('Return to defaults', 'Auf Standard zurücksetzen'), onclick: () => { st = defaults(); remount(); } }));
+  }
+  function paintMiddle() {
+    if (!middleHost) return;
+    const D = data(), sr = D.stats[st.r], r = st.r, span = D.xr[1] - D.xr[0];
+    const rows = [
+      [T('mode', 'Modalwert') + ` $x_{\\mathrm{mod},${r}}$`, sr.mode == null ? T('– (flat)', '– (flach)') : num(sr.mode)],
+      [T('median', 'Median') + ` $x_{50,${r}}$`, num(sr.x50)],
+      [T('balanced mean', 'Schwerpunkt') + ` $x_{1,${r}} = M_{1,${r}}$`, num(sr.x1)],
+      [`$x_{10,${r}}$ · $x_{90,${r}}$`, num(sr.x10) + ' · ' + num(sr.x90)],
+      [T('span', 'Spanne') + ` $x_{90,${r}} - x_{10,${r}}$`, num(sr.span)]];
+    if (st.p95) rows.push([T('span', 'Spanne') + ` $x_{95,${r}} - x_{5,${r}}$`, num(sr.span95)]);
+    rows.push([T('standard deviation', 'Standardabweichung') + ` $s_${r}$`, num(sr.s)],
+      [T('dispersity', 'Dispersität') + ` $s_${r}/x_{1,${r}}$`, num(sr.disp, '')],
+      [T('polydispersity index', 'Polydispersitätsindex') + ` $(s_${r}/x_{1,${r}})^2$`, num(sr.pdi, '')]);
+    middleHost.innerHTML = '';
+    middleHost.appendChild(h('div', { class: 'tablewrap' }, h('div', { html: `<table class="dt res kv"><tbody>${rows.map((row) => `<tr><td>${md(row[0])}</td><td>${row[1]}</td></tr>`).join('')}</tbody></table>` })));
+    middleHost.appendChild(h('p', { class: 'note', html: md(orderText(sr, r, span)) }));
+    middleHost.appendChild(h('div', { class: 'formulas', html:
+      `<div class="f">${K('x_{1,r} = M_{1,r} = \\sum_i \\bar x_i\\,q_r(\\bar x_i)\\,\\Delta x_i', true)}</div>` +
+      `<div class="f">${K('Q_r(x_{50,r}) = 0.5,\\qquad s_r^2 = M_{2,r} - M_{1,r}^2', true)}</div>` +
+      `<div class="f deep">${K('x_{1,r} = \\int_{x_\\mathrm{min}}^{x_\\mathrm{max}} x\\,q_r(x)\\,\\mathrm{d}x', true)}</div>` +
+      `<div class="f deep">${K('s_r^2 = \\int (x - x_{1,r})^2\\,q_r(x)\\,\\mathrm{d}x = M_{2,r} - 2x_{1,r}M_{1,r} + x_{1,r}^2 = M_{2,r} - M_{1,r}^2', true)}</div>` +
+      `<p class="note">${md(T('$M_{2,r}$ is the mean of $x^2$, not $x_{1,r}^2$: the difference between the two is exactly the variance $s_r^2$.', '$M_{2,r}$ ist der Mittelwert von $x^2$, nicht $x_{1,r}^2$: Der Unterschied ist genau die Varianz $s_r^2$.'))}</p>` +
+      `<p class="note deep">${md(T('Every mean follows from moments of the measured distribution: $x_{1,r} = M_{1,r} = M_{r+1,0}/M_{r,0}$ (from $M_{k,r} = M_{k+r-l,l}/M_{r-l,l}$ with $l = 0$, $k = 1$).', 'Jeder Mittelwert folgt aus Momenten der gemessenen Verteilung: $x_{1,r} = M_{1,r} = M_{r+1,0}/M_{r,0}$ (aus $M_{k,r} = M_{k+r-l,l}/M_{r-l,l}$ mit $l = 0$, $k = 1$).'))}</p>` }));
+  }
+  function paintWidth() {
+    if (!widthHost) return;
+    const D = data(), S5 = D.stats;
+    const head = ['', K('x_{1,r}'), K('x_{90,r}-x_{10,r}')].concat(st.p95 ? [K('x_{95,r}-x_{5,r}')] : [], [K('s_r'), K('s_r/x_{1,r}'), K('(s_r/x_{1,r})^2')]);
+    const rows = RS.map((r) => {
+      const s = S5[r];
+      return [`<span class="${rcol(r)}" style="color:var(--rc);font-weight:700">r = ${r}</span>`, tnum(s.x1) + ' ' + U, tnum(s.span) + ' ' + U].concat(st.p95 ? [tnum(s.span95) + ' ' + U] : [], [tnum(s.s) + ' ' + U, tnum(s.disp), tnum(s.pdi)]);
+    });
+    const html = `<table class="dt res wid"><thead><tr>${head.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map((row, r) => `<tr${r === st.r ? ' class="hi"' : ''}>${row.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    widthHost.innerHTML = '';
+    widthHost.appendChild(h('div', { class: 'tablewrap' }, h('div', { html: html })));
+    // absolute and relative width can rank the weightings differently
+    let pair = null;
+    for (const [a, b] of [[3, 2], [3, 0], [2, 0], [3, 1], [2, 1], [1, 0]]) {
+      if (S5[a].span > S5[b].span * 1.1 && S5[a].disp < S5[b].disp * 0.9) { pair = [a, b]; break; }
+    }
+    const note = pair
+      ? T(`Absolute and relative width disagree here: the span is larger for $r = ${pair[0]}$, but the dispersity is larger for $r = ${pair[1]}$. The span is measured in µm; the dispersity divides by the mean, and $x_{1,${pair[1]}}$ = ${num(S5[pair[1]].x1)} is smaller than $x_{1,${pair[0]}}$ = ${num(S5[pair[0]].x1)}.`,
+        `Absolute und relative Breite widersprechen sich hier: Die Spanne ist für $r = ${pair[0]}$ größer, die Dispersität aber für $r = ${pair[1]}$. Die Spanne wird in µm gemessen; die Dispersität teilt durch den Mittelwert, und $x_{1,${pair[1]}}$ = ${num(S5[pair[1]].x1)} ist kleiner als $x_{1,${pair[0]}}$ = ${num(S5[pair[0]].x1)}.`)
+      : T('The same particles have a different width in every weighting. Quote $r$ with every width, and say whether it is absolute (µm) or relative (no unit).', 'Dieselben Partikel haben in jeder Gewichtung eine andere Breite. Geben Sie zu jeder Breite $r$ an und ob sie absolut (µm) oder relativ (ohne Einheit) ist.');
+    widthHost.appendChild(h('p', { class: 'note', html: md(note) }));
+  }
+  function paintSauter() {
+    if (!sauterHost) return;
+    const D = data(), d0 = D.by[0];
+    const M20 = QMath.momentCont(d0, 2), M30 = QMath.momentCont(d0, 3), Mm13 = M20 / M30, x12 = 1 / Mm13;
+    const SV = 6 * st.psi * st.psi / x12, Sm = SV / st.rho, V = Math.PI / 6 * M30;
+    const n3 = (v) => tnum(v);
+    const lines = [
+      `M_{2,0} = \\int x^2 q_0\\,\\mathrm{d}x = ${n3(M20)}\\ ${UT}^2,\\qquad M_{3,0} = ${n3(M30)}\\ ${UT}^3`,
+      `M_{-1,3} = \\frac{M_{2,0}}{M_{3,0}} = ${n3(Mm13)}\\ ${UT}^{-1}`,
+      `x_{1,2} = \\frac{1}{M_{-1,3}} = \\frac{M_{3,0}}{M_{2,0}} = ${n3(x12)}\\ ${UT}`,
+      `S_V = \\frac{6\\,\\Psi_{S,V}^2}{x_{1,2}} = ${n3(SV)}\\ ${UT}^{-1} = ${n3(SV)}\\ \\mathrm{m^2\\,cm^{-3}}`,
+      `S_m = \\frac{S_V}{\\rho} = ${n3(Sm)}\\ \\mathrm{m^2\\,g^{-1}}`,
+      `\\bar V = \\frac{\\pi}{6}\\,M_{3,0}\\,\\Psi_{V,M}^3 = ${n3(V)}\\ ${UT}^3`];
+    sauterHost.innerHTML = '';
+    sauterHost.appendChild(h('div', { class: 'formulas sauter', html: lines.map((l) => `<div class="f">${K(l, true)}</div>`).join('') }));
+    sauterHost.appendChild(h('p', { class: 'note', html: md(T(`The Sauter diameter is the balanced mean of the area-weighted distribution, $x_{1,2} = M_{1,2}$: a sphere of this size has the same surface-to-volume ratio as the whole sample. Here the sizes are volume-equivalent diameters, so $\\Psi_{V,M} = 1$; $\\Psi_{S,V} = x_S/x_V$ is 1 for spheres (lesson 00 computes it for other bodies).`,
+      `Der Sauterdurchmesser ist der Schwerpunkt der flächengewichteten Verteilung, $x_{1,2} = M_{1,2}$: Eine Kugel dieser Größe hat dasselbe Verhältnis von Oberfläche zu Volumen wie die ganze Probe. Die Größen sind hier volumengleiche Durchmesser, also $\\Psi_{V,M} = 1$; $\\Psi_{S,V} = x_S/x_V$ ist 1 für Kugeln (Lektion 00 berechnet es für andere Körper).`)) }));
+  }
+  function refresh(parts) {
+    if (plate) plate.show(false);
+    if (cum) cum.render();
+    if (readoutEl) readoutEl.innerHTML = readout();
+    paintMiddle(); paintWidth(); paintSauter();
+    if (parts !== 'noSettings') paintSettings();
+  }
+  function remount() { if (mountRoot) { mountRoot.innerHTML = ''; mountPlay(mountRoot); } }
+  const TRY = () => [
+    { t: T('Set the skewness to 0: where do mode, median and mean lie? Then switch to $r = 3$: is $q_3$ still symmetric?', 'Stellen Sie die Schiefe auf 0: Wo liegen Modalwert, Median und Mittelwert? Wechseln Sie dann zu $r = 3$: Ist $q_3$ noch symmetrisch?'), go: () => applyPreset('sym') },
+    { t: T('Drag the pivot to the median. Which way does the plate tip, and why?', 'Ziehen Sie den Drehpunkt auf den Median. Wohin kippt die Platte, und warum?'), go: () => { applyPreset('skew'); st.pivot = data().stats[0].x50; refresh(); if (plate) plate.show(true); } },
+    { t: T('Switch from $r = 0$ to $r = 3$. Which of the three middles moves furthest, and does the order stay the same?', 'Wechseln Sie von $r = 0$ zu $r = 3$. Welche der drei Mitten wandert am weitesten, und bleibt die Reihenfolge gleich?'), go: () => { applyPreset('skew'); st.all = true; refresh(); } },
+    { t: T('Bimodal: does any particle have the mean size $x_{1,0}$?', 'Bimodal: Hat irgendein Partikel die mittlere Größe $x_{1,0}$?'), go: () => applyPreset('bimodal') },
+    { t: T('Narrow the distribution. Why do the four weightings nearly agree?', 'Machen Sie die Verteilung schmal. Warum stimmen die vier Gewichtungen fast überein?'), go: () => applyPreset('narrow') },
+    { t: T('Fly ash: find $x_{1,2}$ = 21.5 µm in the Sauter box and compare it with $x_{50,2}$ = 10 µm.', 'Flugasche: Finden Sie $x_{1,2}$ = 21.5 µm im Sauter-Kasten und vergleichen Sie mit $x_{50,2}$ = 10 µm.'), go: () => { applyPreset('fly'); st.r = 2; refresh(); } },
+  ];
+  function mountPlay(root) {
+    mountRoot = root;
+    const plotCol = h('div', { class: 'col a-plot' }), restCol = h('div', { class: 'col a-rest' });
+    settingsHost = h('section', { class: 'card settings a-set' });
+    root.appendChild(h('div', { class: 'grid play' }, [plotCol, settingsHost, restCol]));
+    plate = platePlot(plateGet, { onPivot: (x) => {
+      const D = data(), d = D.by[st.r], sr = D.stats[st.r], span = D.xr[1] - D.xr[0];
+      x = Math.min(d.xmax - 0.02 * span, Math.max(d.xmin + 0.02 * span, x));
+      st.pivot = Math.abs(x - sr.x1) < 0.015 * span ? null : x;
+      plate.show(false); readoutEl.innerHTML = readout();
+    } });
+    cum = cumPlot(plateGet);
+    readoutEl = h('div', { class: 'readout' });
+    plotCol.appendChild(card(null, [plate.el, cum.el, readoutEl]));
+    middleHost = h('div');
+    restCol.appendChild(card(T('Middle and width in the chosen weighting', 'Mitte und Breite in der gewählten Gewichtung'), [middleHost]));
+    widthHost = h('div');
+    restCol.appendChild(card(T('Width in every weighting', 'Breite in jeder Gewichtung'), [widthHost]));
+    sauterHost = h('div');
+    const psi = slider({ label: md(T('Shape factor $\\Psi_{S,V} = x_S/x_V$', 'Formfaktor $\\Psi_{S,V} = x_S/x_V$')), labelText: 'Ψ_S,V', min: 1, max: 2, step: 0.01, value: st.psi, digits: 2, onInput: (v) => { st.psi = v; paintSauter(); } });
+    const rho = slider({ label: md(T('Density $\\rho$', 'Dichte $\\rho$')), labelText: 'ρ', min: 0.5, max: 20, step: 0.1, value: st.rho, unit: 'g/cm³', digits: 1, onInput: (v) => { st.rho = v; paintSauter(); } });
+    restCol.appendChild(card(T('Sauter box: from moments to specific surface area', 'Sauter-Kasten: von Momenten zur spezifischen Oberfläche'), [sauterHost, h('div', { class: 'mfrow' }, [psi, rho])]));
+    restCol.appendChild(card(T('Try this', 'Probieren Sie'), [h('ol', {}, TRY().map((t) => h('li', {}, [h('span', { html: md(t.t) }), h('button', { type: 'button', class: 'btn', text: T('Set up', 'Einstellen'), onclick: t.go })])))], 'try'));
+    paintSettings(); paintMiddle(); paintWidth(); paintSauter();
+    readoutEl.innerHTML = readout();
+    requestAnimationFrame(() => { plate.show(false); cum.render(); });
+  }
+
+  /* ---------- Test yourself ---------- */
+  function randTri(rand, kind) {
+    const a = R.pick(rand, [2, 4, 5, 6, 10]), wd = R.pick(rand, [10, 12, 16, 20, 24]), b = a + wd;
+    const k = kind || R.pick(rand, ['right', 'left', 'sym']);
+    const f = k === 'sym' ? 0.5 : k === 'right' ? R.pick(rand, [0.15, 0.2, 0.25]) : R.pick(rand, [0.75, 0.8, 0.85]);
+    const c = a + Math.round(f * wd * 2) / 2;
+    return { a: a, b: b, c: c, kind: k, xr: [0, Math.ceil((b + 2) / 5) * 5], d: QMath.piecewiseLinear([[a, 0], [c, 1], [b, 0]], 0, U) };
+  }
+  function randBi(rand) {
+    const a1 = R.pick(rand, [1, 2, 4]), w = R.pick(rand, [6, 8]), gap = R.pick(rand, [10, 12, 14]), a2 = a1 + w + gap, w1 = R.pick(rand, [0.3, 0.4, 0.6, 0.7]);
+    const d = QMath.mixture(QMath.piecewiseLinear([[a1, 0], [a1 + w / 2, 1], [a1 + w, 0]], 0, U), QMath.piecewiseLinear([[a2, 0], [a2 + w / 2, 1], [a2 + w, 0]], 0, U), w1);
+    return { a1: a1, a2: a2, w: w, w1: w1, m1: a1 + w / 2, m2: a2 + w / 2, d: d, xr: [0, Math.ceil((a2 + w + 2) / 5) * 5] };
+  }
+  // small plot of q (area under a dashed outline) and/or Q for questions
+  function miniPlot(o) {
+    const top = o.top || niceMax(stats(o.d).qmax);
+    const P = Plot({
+      height: (w) => Math.round(Math.min(290, Math.max(190, w * 0.42))),
+      spec: () => ({ x: { min: o.xr[0], max: o.xr[1] }, yL: o.showQ ? { min: 0, max: 1 } : { min: 0, max: top }, yR: o.showQ && o.showq ? { min: 0, max: top } : null, small: true }),
+      head: () => (o.showQ ? `<span class="ax ${rcol(o.r)}">${swQ(o.r)}${K('Q_' + o.r + '(x)\\;/\\;\\text{–}')}</span>` : `<span class="ax ${rcol(o.r)}">${swq(o.r, true)}${K('q_' + o.r + '(x)\\;/\\;' + UT + '^{-1}')}</span>`)
+        + (o.showQ && o.showq ? `<span class="ax ${rcol(o.r)}">${swq(o.r, false)}${K('q_' + o.r + '(x)\\;/\\;' + UT + '^{-1}')}</span>` : '<span></span>'),
+      foot: () => `<span></span><span>${K('x\\;/\\;' + UT)}</span>`,
+      aria: () => T('Distribution', 'Verteilung'),
+      draw: (F) => {
+        let s = F.axes();
+        s += `<g class="${rcol(o.r)}">`;
+        if (o.showq) {
+          const Y = o.showQ ? F.YR : F.YL, pts = qPts(F, o.d, Y);
+          if (!o.showQ) s += `<path class="plate" d="M${F.X(o.d.xmin).toFixed(1)} ${F.y0}L${path(pts)}L${F.X(o.d.xmax).toFixed(1)} ${F.y0}Z"/>`;
+          else s += polyline(pts, 'qline');
+        }
+        if (o.showQ) s += polyline(QPts(F, o.d, o.xr), 'Qline');
+        s += '</g>';
+        if (o.extra) s += o.extra(F);
+        return s;
+      },
+      onClick: o.onClick,
+    });
+    return P;
+  }
+  const miniEl = (o) => () => { const P = miniPlot(o); requestAnimationFrame(() => P.render()); return P.el; };
+  const clickMark = (F, x) => (x == null ? '' : `<line x1="${F.X(x)}" x2="${F.X(x)}" y1="${F.y1}" y2="${F.y0}" style="stroke:var(--accent);stroke-width:2"/><circle cx="${F.X(x)}" cy="${F.y0}" r="5" style="fill:var(--accent)"/>`);
+  const ORDERS = () => ['$x_{\\mathrm{mod},0} < x_{50,0} < x_{1,0}$', '$x_{1,0} < x_{50,0} < x_{\\mathrm{mod},0}$', '$x_{\\mathrm{mod},0} = x_{50,0} = x_{1,0}$', '$x_{50,0} < x_{\\mathrm{mod},0} < x_{1,0}$'];
+  const GENS = [
+    { id: 'order', calc: false, make: (rand) => {
+      const t = randTri(rand), ok = { right: 0, left: 1, sym: 2 }[t.kind], s0 = stats(t.d);
+      const why = [T('That needs the long tail on the right.', 'Dafür müsste der lange Ausläufer rechts liegen.'), T('That needs the long tail on the left.', 'Dafür müsste der lange Ausläufer links liegen.'),
+        T('Only a symmetric density has all three middles in one place.', 'Nur bei einer symmetrischen Dichte liegen alle drei Mitten an einer Stelle.'), T('For a single hump the median lies between mode and mean.', 'Bei einer einzelnen Spitze liegt der Median zwischen Modalwert und Mittelwert.')];
+      return {
+        kind: 'single',
+        text: T('The plot shows a number density $q_0$. In which order do mode, median and balanced mean lie?', 'Das Diagramm zeigt eine Anzahldichte $q_0$. In welcher Reihenfolge liegen Modalwert, Median und Schwerpunkt?'),
+        mini: miniEl({ d: t.d, r: 0, xr: t.xr, showq: true }),
+        choices: ORDERS().map((html, i) => ({ html: html, correct: i === ok, why: i === ok ? null : why[i] })),
+        hint: T('Where is the long tail? It pulls the balance point (the mean) towards it, and the median follows half way.', 'Wo ist der lange Ausläufer? Er zieht den Schwerpunkt (den Mittelwert) zu sich, der Median folgt auf halbem Weg.'),
+        solution: T(`The peak is at ${t.c} µm, the support runs from ${t.a} to ${t.b} µm. ${t.kind === 'sym' ? 'The triangle is symmetric, so all three coincide.' : 'The longer flank is on the ' + (t.kind === 'right' ? 'right' : 'left') + ' and pulls the mean furthest.'} $$x_{\\mathrm{mod},0} = ${tnum(s0.mode)}\\ ${UT},\\quad x_{50,0} = ${tnum(s0.x50)}\\ ${UT},\\quad x_{1,0} = ${tnum(s0.x1)}\\ ${UT}$$`,
+          `Die Spitze liegt bei ${t.c} µm, der Bereich reicht von ${t.a} bis ${t.b} µm. ${t.kind === 'sym' ? 'Das Dreieck ist symmetrisch, alle drei fallen zusammen.' : 'Die längere Flanke liegt ' + (t.kind === 'right' ? 'rechts' : 'links') + ' und zieht den Mittelwert am weitesten.'} $$x_{\\mathrm{mod},0} = ${tnum(s0.mode)}\\ ${UT},\\quad x_{50,0} = ${tnum(s0.x50)}\\ ${UT},\\quad x_{1,0} = ${tnum(s0.x1)}\\ ${UT}$$`),
+      };
+    } },
+    { id: 'clickQ', calc: false, make: (rand) => {
+      const t = rand() < 0.75 ? randTri(rand) : randBi(rand), r = R.pick(rand, [0, 0, 3]);
+      const d = r === 0 ? t.d : QMath.convertCont(t.d, r), P = R.pick(rand, [10, 50, 90]), ans = QMath.quantileCont(d, P / 100);
+      const other = P === 50 ? null : QMath.quantileCont(d, 1 - P / 100), span = t.xr[1] - t.xr[0];
+      return {
+        kind: 'click',
+        text: T(`Click on the plot where $x_{${P},${r}}$ lies.`, `Klicken Sie in das Diagramm, wo $x_{${P},${r}}$ liegt.`),
+        plot: (qs) => {
+          const Pl = miniPlot({ d: d, r: r, xr: t.xr, showQ: true, onClick: (x) => { qs.click = Math.max(t.xr[0], Math.min(t.xr[1], x)); Pl.render(); },
+            extra: (F) => clickMark(F, qs.click) + (qs.reveal ? `<path class="guide" d="M${F.x0} ${F.YL(P / 100)}H${F.X(ans)}V${F.y0}" style="stroke:var(--ink);stroke-dasharray:4 3"/><text class="lab" x="${F.X(ans) + 4}" y="${F.y0 - 6}">${sx(P + ',' + r)} = ${tnum(ans)} ${U}</text>` : '') });
+          return Pl;
+        },
+        gradeClick: (x) => {
+          if (Math.abs(x - ans) <= 0.03 * span) return { ok: true };
+          if (other != null && Math.abs(x - other) <= 0.03 * span) return { ok: false, msg: T(`You read at $Q_${r}$ = ${fix(1 - P / 100, 1)}. $x_{${P},${r}}$ is the size below which ${P} % of the sample lies: go across at ${fix(P / 100, 1)}.`, `Sie haben bei $Q_${r}$ = ${fix(1 - P / 100, 1)} abgelesen. Unterhalb von $x_{${P},${r}}$ liegen ${P} % der Probe: waagerecht bei ${fix(P / 100, 1)}.`) };
+          return { ok: false, msg: T(`Go across at $Q_${r} = ${fix(P / 100, 1)}$ to the curve, then down to the $x$-axis.`, `Gehen Sie bei $Q_${r} = ${fix(P / 100, 1)}$ waagerecht zur Kurve, dann hinunter zur $x$-Achse.`) };
+        },
+        why: T(`$x_{${P},${r}}$ = ${num(ans)}: ${P} % of the sample (weighted with $r = ${r}$) is smaller.`, `$x_{${P},${r}}$ = ${num(ans)}: ${P} % der Probe (gewichtet mit $r = ${r}$) sind kleiner.`),
+        hint: T(`A quantile is read off the cumulative distribution: where does $Q_${r}$ reach ${fix(P / 100, 1)}?`, `Ein Quantil liest man an der Verteilungssumme ab: Wo erreicht $Q_${r}$ den Wert ${fix(P / 100, 1)}?`),
+        solution: T(`Across at $Q_${r} = ${fix(P / 100, 1)}$, down to the axis: $x_{${P},${r}}$ = ${num(ans)}.`, `Waagerecht bei $Q_${r} = ${fix(P / 100, 1)}$, hinunter zur Achse: $x_{${P},${r}}$ = ${num(ans)}.`),
+      };
+    } },
+    { id: 'balance', calc: false, make: (rand) => {
+      const t = randTri(rand, R.pick(rand, ['right', 'left'])), s0 = stats(t.d), span = t.b - t.a;
+      return {
+        kind: 'click',
+        text: T('The density $q_0$ is cut out of sheet metal. Click below the plate where the pivot must go so that it balances.', 'Die Dichte $q_0$ ist aus Blech ausgeschnitten. Klicken Sie unter die Platte, wohin der Drehpunkt muss, damit sie im Gleichgewicht ist.'),
+        plot: (qs) => {
+          const Pl = platePlot(() => ({ d: t.d, r: 0, sr: s0, others: [], xr: t.xr, top: niceMax(s0.qmax), pivot: qs.reveal ? s0.x1 : null, noPivot: !qs.reveal, level: !qs.reveal,
+            cand: qs.click, show: { mean: !!qs.reveal, mode: !!qs.reveal, med: !!qs.reveal } }),
+          { small: true, maxH: 260, minH: 190, onClick: (x) => { qs.click = Math.max(t.a, Math.min(t.b, x)); Pl.show(false); }, onPivot: null });
+          return Pl;
+        },
+        gradeClick: (x) => {
+          if (Math.abs(x - s0.x1) <= 0.05 * span) return { ok: true };
+          if (Math.abs(x - s0.mode) <= 0.04 * span) return { ok: false, msg: T('That is the peak, the mode. The long flank on the other side would tip the plate.', 'Das ist die Spitze, der Modalwert. Die lange Flanke auf der anderen Seite würde die Platte kippen.') };
+          if (Math.abs(x - s0.x50) <= 0.03 * span) return { ok: false, msg: T('That splits the area in half (the median). Balance also counts the lever arms: move further towards the long flank.', 'Das teilt die Fläche in zwei Hälften (der Median). Für das Gleichgewicht zählen auch die Hebel: weiter zur langen Flanke.') };
+          return { ok: false, msg: T('The balance point is the centre of mass of the triangle.', 'Der Gleichgewichtspunkt ist der Schwerpunkt des Dreiecks.') };
+        },
+        why: T(`The plate balances on $x_{1,0}$ = ${num(s0.x1)}, the centre of mass of the triangle: $(a + c + b)/3$.`, `Die Platte ist auf $x_{1,0}$ = ${num(s0.x1)} im Gleichgewicht, dem Schwerpunkt des Dreiecks: $(a + c + b)/3$.`),
+        hint: T('The long flank has the longer lever arm. The pivot lies between the median and the end of the long flank.', 'Die lange Flanke hat den längeren Hebel. Der Drehpunkt liegt zwischen dem Median und dem Ende der langen Flanke.'),
+        solution: T(`The balanced mean is the centre of mass: $$x_{1,0} = \\int x\\,q_0\\,\\mathrm{d}x = \\frac{${t.a} + ${t.c} + ${t.b}}{3}\\ ${UT} = ${tnum(s0.x1)}\\ ${UT}$$ (the median is ${num(s0.x50)}, the mode ${num(t.c)}).`,
+          `Der Schwerpunkt der Platte: $$x_{1,0} = \\int x\\,q_0\\,\\mathrm{d}x = \\frac{${t.a} + ${t.c} + ${t.b}}{3}\\ ${UT} = ${tnum(s0.x1)}\\ ${UT}$$ (der Median ist ${num(s0.x50)}, der Modalwert ${num(t.c)}).`),
+      };
+    } },
+    { id: 'symq3', calc: false, make: (rand) => {
+      const t = randTri(rand, 'sym'), s3 = stats(QMath.convertCont(t.d, 3));
+      const ch = [
+        { html: T('$x_{1,3}$ and $x_{50,3}$ lie to the right of the centre of $q_0$.', '$x_{1,3}$ und $x_{50,3}$ liegen rechts von der Mitte von $q_0$.'), correct: true },
+        { html: T('$q_3$ is symmetric about the same centre, only taller.', '$q_3$ ist symmetrisch um dieselbe Mitte, nur höher.'), why: T('Weighting by $x^3$ lifts the right flank more than the left one.', 'Die Gewichtung mit $x^3$ hebt die rechte Flanke stärker als die linke.') },
+        { html: T('$x_{1,3}$ lies to the left of the centre of $q_0$.', '$x_{1,3}$ liegt links von der Mitte von $q_0$.'), why: T('Large particles count more in $q_3$, so its mean moves to larger sizes.', 'Große Partikel zählen in $q_3$ mehr, sein Mittelwert rückt zu größeren Größen.') },
+        { html: T('$q_3$ has the same median as $q_0$.', '$q_3$ hat denselben Median wie $q_0$.'), why: T('Half of the volume lies in the coarser half: the median moves right.', 'Die Hälfte des Volumens liegt in der gröberen Hälfte: Der Median rückt nach rechts.') }];
+      return {
+        kind: 'single',
+        text: T(`The number density $q_0$ is symmetric about ${t.c} µm. What happens when the same particles are weighted by volume ($q_3$)?`, `Die Anzahldichte $q_0$ ist symmetrisch um ${t.c} µm. Was passiert, wenn dieselben Partikel nach Volumen gewichtet werden ($q_3$)?`),
+        mini: miniEl({ d: t.d, r: 0, xr: t.xr, showq: true }),
+        choices: R.shuffle(rand, ch),
+        hint: T('$q_3 \\propto x^3 q_0$: which flank does the factor $x^3$ lift more?', '$q_3 \\propto x^3 q_0$: Welche Flanke hebt der Faktor $x^3$ stärker?'),
+        solution: T(`$q_3 \\propto x^3 q_0$ lifts the right flank, so $q_3$ is no longer symmetric and its middles move right: $$x_{50,3} = ${tnum(s3.x50)}\\ ${UT},\\qquad x_{1,3} = ${tnum(s3.x1)}\\ ${UT}$$ against ${t.c} µm for $q_0$.`,
+          `$q_3 \\propto x^3 q_0$ hebt die rechte Flanke, $q_3$ ist nicht mehr symmetrisch und seine Mitten rücken nach rechts: $$x_{50,3} = ${tnum(s3.x50)}\\ ${UT},\\qquad x_{1,3} = ${tnum(s3.x1)}\\ ${UT}$$ statt ${t.c} µm bei $q_0$.`),
+      };
+    } },
+    { id: 'statements', calc: false, make: (rand) => {
+      const pool = [
+        { t: T('Half of the area under $q_r$ lies left of $x_{50,r}$.', 'Die Hälfte der Fläche unter $q_r$ liegt links von $x_{50,r}$.'), ok: true },
+        { t: T('Half of the area under $q_r$ lies left of $x_{1,r}$.', 'Die Hälfte der Fläche unter $q_r$ liegt links von $x_{1,r}$.'), ok: false, why: T('That defines the median. The balanced mean also weighs the lever arms.', 'Das definiert den Median. Der Schwerpunkt berücksichtigt auch die Hebel.') },
+        { t: T('$q_r$, cut out of sheet metal, balances on a pivot at $x_{1,r}$.', '$q_r$, aus Blech ausgeschnitten, ist auf einem Drehpunkt bei $x_{1,r}$ im Gleichgewicht.'), ok: true },
+        { t: T('$q_r$ balances on a pivot at its mode.', '$q_r$ ist auf einem Drehpunkt beim Modalwert im Gleichgewicht.'), ok: false, why: T('Only if it is symmetric.', 'Nur wenn sie symmetrisch ist.') },
+        { t: T('At the mode $x_{\\mathrm{mod},r}$ the cumulative curve $Q_r$ is steepest.', 'Beim Modalwert $x_{\\mathrm{mod},r}$ ist die Verteilungssumme $Q_r$ am steilsten.'), ok: true },
+        { t: T('At the median the cumulative curve $Q_r$ is steepest.', 'Beim Median ist die Verteilungssumme $Q_r$ am steilsten.'), ok: false, why: T('$Q_r$ is steepest where $q_r$ is highest: at the mode. The median is where $Q_r = 0.5$.', '$Q_r$ ist dort am steilsten, wo $q_r$ am höchsten ist: beim Modalwert. Der Median liegt bei $Q_r = 0.5$.') },
+        { t: T('The standard deviation $s_r$ has the same unit as $x$.', 'Die Standardabweichung $s_r$ hat dieselbe Einheit wie $x$.'), ok: true },
+        { t: T('The dispersity $s_r/x_{1,r}$ is measured in µm.', 'Die Dispersität $s_r/x_{1,r}$ wird in µm gemessen.'), ok: false, why: T('It is a ratio of two lengths and has no unit.', 'Sie ist ein Verhältnis zweier Längen und hat keine Einheit.') },
+        { t: T('$x_{1,2} = M_{3,0}/M_{2,0}$.', '$x_{1,2} = M_{3,0}/M_{2,0}$.'), ok: true },
+        { t: T('$M_{2,0} = x_{1,0}^2$.', '$M_{2,0} = x_{1,0}^2$.'), ok: false, why: T('$M_{2,0}$ is the mean of $x^2$; $M_{2,0} - x_{1,0}^2 = s_0^2$.', '$M_{2,0}$ ist der Mittelwert von $x^2$; $M_{2,0} - x_{1,0}^2 = s_0^2$.') },
+        { t: T('If all particles have the same size, $s_r = 0$ for every $r$.', 'Sind alle Partikel gleich groß, ist $s_r = 0$ für jedes $r$.'), ok: true },
+        { t: T('A larger span $x_{90,r} - x_{10,r}$ always means a larger dispersity $s_r/x_{1,r}$.', 'Eine größere Spanne $x_{90,r} - x_{10,r}$ bedeutet immer eine größere Dispersität $s_r/x_{1,r}$.'), ok: false, why: T('The fly ash has the larger span for $r = 3$ but the larger dispersity for $r = 2$.', 'Die Flugasche hat die größere Spanne für $r = 3$, aber die größere Dispersität für $r = 2$.') },
+      ];
+      let pick;
+      do { pick = R.shuffle(rand, pool).slice(0, 4); } while (!pick.some((p) => p.ok) || pick.every((p) => p.ok));
+      return {
+        kind: 'multi',
+        text: T('Which statements are true?', 'Welche Aussagen sind richtig?'),
+        choices: pick.map((p) => ({ html: p.t, correct: p.ok, why: p.ok ? null : p.why })),
+        hint: T('Median: half the area. Mean: the balance point. Mode: the peak of $q_r$, the steepest point of $Q_r$.', 'Median: halbe Fläche. Mittelwert: Gleichgewichtspunkt. Modalwert: Spitze von $q_r$, steilste Stelle von $Q_r$.'),
+        solution: pick.map((p) => (p.ok ? '✓ ' : '✗ ') + p.t + (p.why ? ' ' + p.why : '')).join('<br>'),
+      };
+    } },
+    { id: 'bimodal', calc: false, make: (rand) => {
+      const t = randBi(rand), s0 = stats(t.d), big = t.w1 > 0.5 ? 1 : 2;
+      const ch = [
+        { html: T('In the gap, closer to the larger hump: no particle has this size.', 'In der Lücke, näher an der größeren Spitze: Kein Partikel hat diese Größe.'), correct: true },
+        { html: T('At the peak of the larger hump.', 'An der Spitze der größeren Erhebung.'), why: T('That is the mode. The other hump pulls the balance point away from it.', 'Das ist der Modalwert. Die andere Spitze zieht den Schwerpunkt von dort weg.') },
+        { html: T('At the peak of the smaller hump.', 'An der Spitze der kleineren Erhebung.'), why: T('The larger hump holds more particles and pulls harder.', 'Die größere Spitze enthält mehr Partikel und zieht stärker.') },
+        { html: T('Exactly halfway between the two peaks.', 'Genau in der Mitte zwischen den beiden Spitzen.'), why: T('Only if both humps held the same number of particles.', 'Nur wenn beide Spitzen gleich viele Partikel enthielten.') }];
+      return {
+        kind: 'single',
+        text: T('A sample contains two populations (number density $q_0$ in the plot). Where does the balanced mean $x_{1,0}$ lie?', 'Eine Probe enthält zwei Populationen (Anzahldichte $q_0$ im Diagramm). Wo liegt der Schwerpunkt $x_{1,0}$?'),
+        mini: miniEl({ d: t.d, r: 0, xr: t.xr, showq: true }),
+        choices: R.shuffle(rand, ch),
+        hint: T('Treat each hump as a weight at its centre, in proportion to its area.', 'Behandeln Sie jede Spitze als Gewicht in ihrer Mitte, proportional zu ihrer Fläche.'),
+        solution: T(`The humps hold ${fix(100 * t.w1, 0)} % and ${fix(100 - 100 * t.w1, 0)} % of the particles, centred at ${t.m1} and ${t.m2} µm: $$x_{1,0} = ${t.w1} \\times ${t.m1}\\ ${UT} + ${+(1 - t.w1).toFixed(2)} \\times ${t.m2}\\ ${UT} = ${tnum(s0.x1)}\\ ${UT}$$ This lies in the gap (${t.a1 + t.w} to ${t.a2} µm), closer to hump ${big}. A mean need not be a size that occurs.`,
+          `Die Spitzen enthalten ${fix(100 * t.w1, 0)} % und ${fix(100 - 100 * t.w1, 0)} % der Partikel, mit Mitten bei ${t.m1} und ${t.m2} µm: $$x_{1,0} = ${t.w1} \\times ${t.m1}\\ ${UT} + ${+(1 - t.w1).toFixed(2)} \\times ${t.m2}\\ ${UT} = ${tnum(s0.x1)}\\ ${UT}$$ Das liegt in der Lücke (${t.a1 + t.w} bis ${t.a2} µm), näher an Spitze ${big}. Ein Mittelwert muss keine vorkommende Größe sein.`),
+      };
+    } },
+    { id: 'widthwhy', calc: false, make: (rand) => {
+      let [a, b] = R.pick(rand, [[1, 100], [2, 100], [1, 50], [2, 200], [1, 200]]);
+      let d3 = QMath.uniformQ(a, b, 3, U), s3 = stats(d3), s2 = stats(QMath.convertCont(d3, 2));
+      if (!(s3.span > s2.span && s2.disp > s3.disp)) { a = 1; b = 100; d3 = FLY(); s3 = stats(d3); s2 = stats(QMath.convertCont(d3, 2)); }
+      const ch = [
+        { html: T(`The span is an absolute width in µm; the dispersity divides by the mean, and $x_{1,2}$ = ${num(s2.x1)} is much smaller than $x_{1,3}$ = ${num(s3.x1)}.`, `Die Spanne ist eine absolute Breite in µm; die Dispersität teilt durch den Mittelwert, und $x_{1,2}$ = ${num(s2.x1)} ist viel kleiner als $x_{1,3}$ = ${num(s3.x1)}.`), correct: true },
+        { html: T('One of the numbers must be wrong: a wider distribution always has the larger dispersity.', 'Eine der Zahlen muss falsch sein: Eine breitere Verteilung hat immer die größere Dispersität.'), why: T('Both are right; they measure different things.', 'Beide stimmen; sie messen Verschiedenes.') },
+        { html: T('$Q_2$ and $Q_3$ describe different samples.', '$Q_2$ und $Q_3$ beschreiben verschiedene Proben.'), why: T('They describe the same particles, counted differently.', 'Sie beschreiben dieselben Partikel, anders gezählt.') },
+        { html: T('The span uses $Q_r$, the dispersity uses $q_r$, so they cannot be compared.', 'Die Spanne verwendet $Q_r$, die Dispersität $q_r$, daher sind sie nicht vergleichbar.'), why: T('Both come from the same distribution; the difference is the division by the mean.', 'Beide stammen aus derselben Verteilung; der Unterschied ist die Division durch den Mittelwert.') }];
+      return {
+        kind: 'single',
+        text: T(`$Q_3$ rises linearly from ${a} to ${b} µm (like fly ash). For the same particles the span $x_{90,r} - x_{10,r}$ is ${num(s3.span)} for $r = 3$ and ${num(s2.span)} for $r = 2$, yet the dispersity $s_r/x_{1,r}$ is ${tnum(s3.disp)} for $r = 3$ and ${tnum(s2.disp)} for $r = 2$. How can both be true?`,
+          `$Q_3$ steigt linear von ${a} bis ${b} µm (wie bei Flugasche). Für dieselben Partikel ist die Spanne $x_{90,r} - x_{10,r}$ ${num(s3.span)} für $r = 3$ und ${num(s2.span)} für $r = 2$, die Dispersität $s_r/x_{1,r}$ aber ${tnum(s3.disp)} für $r = 3$ und ${tnum(s2.disp)} für $r = 2$. Wie kann beides stimmen?`),
+        choices: R.shuffle(rand, ch),
+        hint: T('Which of the two measures has a unit?', 'Welches der beiden Maße hat eine Einheit?'),
+        solution: T(`Absolute width (µm) and relative width (no unit) answer different questions. $$\\frac{s_3}{x_{1,3}} = \\frac{${tnum(s3.s)}}{${tnum(s3.x1)}} = ${tnum(s3.disp)},\\qquad \\frac{s_2}{x_{1,2}} = \\frac{${tnum(s2.s)}}{${tnum(s2.x1)}} = ${tnum(s2.disp)}$$ The smaller mean of the area-weighted distribution makes its relative width larger.`,
+          `Absolute Breite (µm) und relative Breite (ohne Einheit) beantworten verschiedene Fragen. $$\\frac{s_3}{x_{1,3}} = \\frac{${tnum(s3.s)}}{${tnum(s3.x1)}} = ${tnum(s3.disp)},\\qquad \\frac{s_2}{x_{1,2}} = \\frac{${tnum(s2.s)}}{${tnum(s2.x1)}} = ${tnum(s2.disp)}$$ Der kleinere Mittelwert der flächengewichteten Verteilung macht ihre relative Breite größer.`),
+      };
+    } },
+    { id: 'triMean', calc: true, make: (rand) => {
+      const t = randTri(rand, R.pick(rand, ['right', 'left'])), s0 = stats(t.d), ans = (t.a + t.b + t.c) / 3, mid = (t.a + t.b) / 2;
+      return {
+        kind: 'number',
+        text: T(`The number density $q_0$ is a triangle: it rises linearly from 0 at ${t.a} µm to its peak at ${t.c} µm and falls back to 0 at ${t.b} µm. Compute the balanced mean $x_{1,0}$.`,
+          `Die Anzahldichte $q_0$ ist ein Dreieck: Sie steigt linear von 0 bei ${t.a} µm bis zur Spitze bei ${t.c} µm und fällt bei ${t.b} µm wieder auf 0. Berechnen Sie den Schwerpunkt $x_{1,0}$.`),
+        mini: miniEl({ d: t.d, r: 0, xr: t.xr, showq: true }),
+        label: '$x_{1,0}$ =', unit: U, answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => Math.abs(v - t.c) <= 0.01 * t.c, msg: T('That is the peak, the mode $x_{\\mathrm{mod},0}$.', 'Das ist die Spitze, der Modalwert $x_{\\mathrm{mod},0}$.') },
+          { test: (v) => Math.abs(v - mid) <= 0.01 * mid, msg: T('That is the middle of the range. The mean depends on where the peak is.', 'Das ist die Mitte des Bereichs. Der Mittelwert hängt davon ab, wo die Spitze liegt.') },
+          { test: (v) => Math.abs(v - s0.x50) <= 0.01 * s0.x50, msg: T('That is the median: half the area on each side. The mean also weighs the lever arms.', 'Das ist der Median: auf jeder Seite die halbe Fläche. Der Mittelwert berücksichtigt auch die Hebel.') }],
+        hint: T('$x_{1,0} = \\int x\\,q_0(x)\\,\\mathrm{d}x$ is the centre of mass of the triangle.', '$x_{1,0} = \\int x\\,q_0(x)\\,\\mathrm{d}x$ ist der Schwerpunkt des Dreiecks.'),
+        solution: T(`The integral $\\int x\\,q_0\\,\\mathrm{d}x$ over a triangle gives the mean of its three corners: $$x_{1,0} = \\frac{${t.a} + ${t.c} + ${t.b}}{3}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+          `Das Integral $\\int x\\,q_0\\,\\mathrm{d}x$ über ein Dreieck ergibt den Mittelwert seiner drei Ecken: $$x_{1,0} = \\frac{${t.a} + ${t.c} + ${t.b}}{3}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`),
+      };
+    } },
+    { id: 'linQ3', calc: true, make: (rand) => {
+      const a = R.pick(rand, [1, 2, 5]), b = R.pick(rand, [50, 100, 200, 500]), what = R.pick(rand, ['x502', 'x12', 's3']);
+      const L = Math.log(b / a);
+      const ans = what === 'x502' ? Math.sqrt(a * b) : what === 'x12' ? (b - a) / L : (b - a) / Math.sqrt(12);
+      const sym = { x502: 'x_{50,2}', x12: 'x_{1,2}', s3: 's_3' }[what];
+      const errors = [];
+      if (what !== 's3') errors.push({ test: (v) => Math.abs(v - (a + b) / 2) <= 0.01 * (a + b) / 2, msg: T(`That is ${what === 'x502' ? '$x_{50,3}$' : '$x_{1,3}$'}, for $r = 3$. With $r = 2$ every size counts with $x^{-1}$ less.`, `Das ist ${what === 'x502' ? '$x_{50,3}$' : '$x_{1,3}$'}, für $r = 3$. Mit $r = 2$ zählt jede Größe mit $x^{-1}$ weniger.`) });
+      if (what === 'x12') errors.push({ test: (v) => Math.abs(v - Math.sqrt(a * b)) <= 0.01 * Math.sqrt(a * b), msg: T('That is the median $x_{50,2}$, not the balanced mean.', 'Das ist der Median $x_{50,2}$, nicht der Schwerpunkt.') });
+      if (what === 's3') errors.push({ test: (v) => Math.abs(v - ans * ans) <= 0.01 * ans * ans, msg: T('That is the variance $s_3^2$: take the root.', 'Das ist die Varianz $s_3^2$: Ziehen Sie die Wurzel.') });
+      const sol = {
+        x502: T(`$q_3 = 1/(x_\\mathrm{max} - x_\\mathrm{min})$ is constant, so $q_2 \\propto x^{-1}q_3$ gives $Q_2(x) = \\ln(x/x_\\mathrm{min})/\\ln(x_\\mathrm{max}/x_\\mathrm{min})$. Setting $Q_2 = 0.5$: $$x_{50,2} = \\sqrt{x_\\mathrm{min}\\,x_\\mathrm{max}} = \\sqrt{${a} \\times ${b}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+          `$q_3 = 1/(x_\\mathrm{max} - x_\\mathrm{min})$ ist konstant, also liefert $q_2 \\propto x^{-1}q_3$ die Summe $Q_2(x) = \\ln(x/x_\\mathrm{min})/\\ln(x_\\mathrm{max}/x_\\mathrm{min})$. Mit $Q_2 = 0.5$: $$x_{50,2} = \\sqrt{x_\\mathrm{min}\\,x_\\mathrm{max}} = \\sqrt{${a} \\times ${b}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`),
+        x12: T(`The Sauter diameter is $x_{1,2} = 1/M_{-1,3}$: $$M_{-1,3} = \\int_{${a}}^{${b}} \\frac{x^{-1}}{${b} - ${a}}\\,\\mathrm{d}x = \\frac{\\ln(${b}/${a})}{${b - a}\\ ${UT}},\\qquad x_{1,2} = \\frac{${b - a}}{\\ln ${+(b / a).toFixed(4)}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+          `Der Sauterdurchmesser ist $x_{1,2} = 1/M_{-1,3}$: $$M_{-1,3} = \\int_{${a}}^{${b}} \\frac{x^{-1}}{${b} - ${a}}\\,\\mathrm{d}x = \\frac{\\ln(${b}/${a})}{${b - a}\\ ${UT}},\\qquad x_{1,2} = \\frac{${b - a}}{\\ln ${+(b / a).toFixed(4)}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`),
+        s3: T(`A constant density on a range of width $\\Delta = ${b - a}$ µm has $s_3^2 = M_{2,3} - M_{1,3}^2 = \\Delta^2/12$: $$s_3 = \\frac{${b - a}}{\\sqrt{12}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+          `Eine konstante Dichte auf einem Bereich der Breite $\\Delta = ${b - a}$ µm hat $s_3^2 = M_{2,3} - M_{1,3}^2 = \\Delta^2/12$: $$s_3 = \\frac{${b - a}}{\\sqrt{12}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`) }[what];
+      return {
+        kind: 'number',
+        text: T(`$Q_3$ rises linearly from ${a} µm to ${b} µm (like fly ash). Compute $${sym}$.`, `$Q_3$ steigt linear von ${a} µm bis ${b} µm (wie bei Flugasche). Berechnen Sie $${sym}$.`),
+        label: '$' + sym + '$ =', unit: U, answer: ans, tol: 0.02, errors: errors,
+        hint: { x502: T('Find $Q_2(x)$ first: $q_2 \\propto x^{-1} q_3$, then solve $Q_2 = 0.5$.', 'Bestimmen Sie zuerst $Q_2(x)$: $q_2 \\propto x^{-1} q_3$, dann $Q_2 = 0.5$ lösen.'),
+          x12: T('$x_{1,2} = 1/M_{-1,3}$ with $M_{-1,3} = \\int x^{-1} q_3\\,\\mathrm{d}x$.', '$x_{1,2} = 1/M_{-1,3}$ mit $M_{-1,3} = \\int x^{-1} q_3\\,\\mathrm{d}x$.'),
+          s3: T('$s_3^2 = M_{2,3} - M_{1,3}^2$ for a constant density.', '$s_3^2 = M_{2,3} - M_{1,3}^2$ für eine konstante Dichte.') }[what],
+        solution: sol,
+      };
+    } },
+    { id: 'sauter', calc: true, make: (rand) => {
+      const xs = R.pick(rand, [[2, 4, 6, 8], [1, 3, 5, 7], [5, 10, 15, 20], [2, 6, 10], [10, 20, 30]]);
+      const N = xs.map(() => R.int(rand, 1, 12) * 5);
+      const S1 = xs.reduce((s, x, i) => s + N[i] * x, 0), S2 = xs.reduce((s, x, i) => s + N[i] * x * x, 0), S3 = xs.reduce((s, x, i) => s + N[i] * x * x * x, 0), S0 = N.reduce((s, v) => s + v, 0);
+      const ans = S3 / S2, x10 = S1 / S0, x11 = S2 / S1, cub = Math.cbrt(S3 / S0), M20 = S2 / S0;
+      const near = (v, w) => Math.abs(v - w) <= 0.01 * w && Math.abs(w - ans) > 0.02 * ans;
+      return {
+        kind: 'number',
+        text: T('Particles were counted in classes (table). Compute the Sauter diameter $x_{1,2}$.', 'Partikel wurden in Klassen gezählt (Tabelle). Berechnen Sie den Sauterdurchmesser $x_{1,2}$.'),
+        table: tableHTML(['i', K('\\bar x_i\\;/\\;' + UT), T('particles', 'Partikel') + ' ' + K('N_i')], xs.map((x, i) => [String(i), String(x), String(N[i])])),
+        label: '$x_{1,2}$ =', unit: U, answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => near(v, x10), msg: T('That is the arithmetic mean $x_{1,0}$. The Sauter diameter weighs each particle with its surface.', 'Das ist der arithmetische Mittelwert $x_{1,0}$. Der Sauterdurchmesser gewichtet jedes Partikel mit seiner Oberfläche.') },
+          { test: (v) => near(v, x11), msg: T('That is $x_{1,1} = M_{2,0}/M_{1,0}$. You need $M_{3,0}/M_{2,0}$.', 'Das ist $x_{1,1} = M_{2,0}/M_{1,0}$. Gesucht ist $M_{3,0}/M_{2,0}$.') },
+          { test: (v) => near(v, cub), msg: T('That is $M_{3,0}^{1/3}$, the size of the particle with the mean volume.', 'Das ist $M_{3,0}^{1/3}$, die Größe des Partikels mit dem mittleren Volumen.') },
+          { test: (v) => near(v, M20), msg: T('That is $M_{2,0}$ (in µm²). Divide $M_{3,0}$ by it.', 'Das ist $M_{2,0}$ (in µm²). Teilen Sie $M_{3,0}$ dadurch.') }],
+        hint: T('$x_{1,2} = M_{3,0}/M_{2,0} = \\sum N_i \\bar x_i^3 / \\sum N_i \\bar x_i^2$.', '$x_{1,2} = M_{3,0}/M_{2,0} = \\sum N_i \\bar x_i^3 / \\sum N_i \\bar x_i^2$.'),
+        solution: T('Total volume over total surface, both from the counts:', 'Gesamtvolumen durch Gesamtoberfläche, beide aus den Anzahlen:') +
+          `$$x_{1,2} = \\frac{M_{3,0}}{M_{2,0}} = \\frac{\\sum_i N_i\\,\\bar x_i^3}{\\sum_i N_i\\,\\bar x_i^2} = \\frac{${S3}}{${S2}}\\ ${UT} = ${tnum(ans)}\\ ${UT}$$`,
+      };
+    } },
+    { id: 'Sm', calc: true, make: (rand) => {
+      const x12 = R.pick(rand, [2, 5, 10, 20, 50]);
+      const mat = R.pick(rand, [{ en: 'glass beads', de: 'Glaskugeln', rho: 2.5, psi: 1 }, { en: 'silica particles', de: 'Silica-Partikel', rho: 2.2, psi: R.pick(rand, [1.1, 1.2]) },
+        { en: 'limestone powder', de: 'Kalksteinpulver', rho: 2.7, psi: R.pick(rand, [1.2, 1.25, 1.3]) }, { en: 'steel shot', de: 'Stahlkugeln', rho: 7.9, psi: 1 }, { en: 'polymer granules', de: 'Polymergranulat', rho: 1.2, psi: R.pick(rand, [1.1, 1.15]) }]);
+      const SV = 6 * mat.psi * mat.psi / x12, ans = SV / mat.rho;
+      const near = (v, w) => Math.abs(v - w) <= 0.01 * w && Math.abs(w - ans) > 0.02 * ans;
+      return {
+        kind: 'number',
+        text: T(`${mat.en[0].toUpperCase() + mat.en.slice(1)} have the Sauter diameter $x_{1,2}$ = ${x12} µm, the shape factor $\\Psi_{S,V}$ = ${mat.psi}${mat.psi === 1 ? ' (spheres)' : ''} and the density $\\rho$ = ${mat.rho} g/cm³. Compute the specific surface area $S_m$.`,
+          `${mat.de} haben den Sauterdurchmesser $x_{1,2}$ = ${x12} µm, den Formfaktor $\\Psi_{S,V}$ = ${mat.psi}${mat.psi === 1 ? ' (Kugeln)' : ''} und die Dichte $\\rho$ = ${mat.rho} g/cm³. Berechnen Sie die spezifische Oberfläche $S_m$.`),
+        label: '$S_m$ =', unit: 'm²/g', answer: ans, tol: 0.02,
+        errors: [
+          { test: (v) => near(v, 6 / x12 / mat.rho), msg: T('You left out the shape factor: $S_V = 6\\Psi_{S,V}^2/x_{1,2}$.', 'Sie haben den Formfaktor vergessen: $S_V = 6\\Psi_{S,V}^2/x_{1,2}$.') },
+          { test: (v) => near(v, 6 * mat.psi / x12 / mat.rho), msg: T('The shape factor enters squared.', 'Der Formfaktor geht quadratisch ein.') },
+          { test: (v) => near(v, SV), msg: T('That is $S_V$ in m²/cm³. Divide by the density.', 'Das ist $S_V$ in m²/cm³. Teilen Sie durch die Dichte.') },
+          { test: (v) => near(v, ans * 1000), msg: T('Check the units: that would be m²/kg.', 'Prüfen Sie die Einheiten: Das wären m²/kg.') }],
+        hint: T('$S_V = 6\\Psi_{S,V}^2/x_{1,2}$ and $S_m = S_V/\\rho$. Note that 1 µm⁻¹ = 1 m²/cm³.', '$S_V = 6\\Psi_{S,V}^2/x_{1,2}$ und $S_m = S_V/\\rho$. Beachten Sie: 1 µm⁻¹ = 1 m²/cm³.'),
+        solution: `$$S_V = \\frac{6\\,\\Psi_{S,V}^2}{x_{1,2}} = \\frac{6 \\times ${mat.psi}^2}{${x12}\\ ${UT}} = ${tnum(SV)}\\ ${UT}^{-1} = ${tnum(SV)}\\ \\mathrm{m^2\\,cm^{-3}}$$ $$S_m = \\frac{S_V}{\\rho} = \\frac{${tnum(SV)}\\ \\mathrm{m^2\\,cm^{-3}}}{${mat.rho}\\ \\mathrm{g\\,cm^{-3}}} = ${tnum(ans)}\\ \\mathrm{m^2\\,g^{-1}}$$`,
+      };
+    } },
+    { id: 'disp', calc: true, make: (rand) => {
+      const [a, b] = R.pick(rand, [[2, 6], [1, 3], [4, 8], [5, 15], [10, 30], [2, 10]]), f = R.pick(rand, [0.5, 0.25, 0.75, 0.2, 0.8]);
+      const M1 = f * a + (1 - f) * b, s = Math.sqrt(f * (1 - f)) * (b - a), ask = R.pick(rand, ['s', 'disp']);
+      const ans = ask === 's' ? s : s / M1;
+      const errors = [{ test: (v) => Math.abs(v - (ask === 's' ? s * s : s * s / M1)) <= 0.01 * Math.abs(ask === 's' ? s * s : s * s / M1) && Math.abs(s - 1) > 0.05, msg: T('You used the variance $s_0^2$. Take its root first.', 'Sie haben die Varianz $s_0^2$ verwendet. Ziehen Sie zuerst die Wurzel.') }];
+      if (f !== 0.5) errors.push({ test: (v) => Math.abs(v - (ask === 's' ? (b - a) / 2 : (b - a) / 2 / M1)) <= 0.01 * Math.abs(ask === 's' ? (b - a) / 2 : (b - a) / 2 / M1), msg: T('Half the distance between the sizes is $s_0$ only for equal shares.', 'Der halbe Abstand der Größen ist $s_0$ nur bei gleichen Anteilen.') });
+      return {
+        kind: 'number',
+        text: T(`A sample contains ${fix(100 * f, 0)} % (by number) particles of ${a} µm and ${fix(100 - 100 * f, 0)} % of ${b} µm. Compute ${ask === 's' ? 'the standard deviation $s_0$' : 'the dispersity $s_0/x_{1,0}$'}.`,
+          `Eine Probe enthält ${fix(100 * f, 0)} % (nach Anzahl) Partikel mit ${a} µm und ${fix(100 - 100 * f, 0)} % mit ${b} µm. Berechnen Sie ${ask === 's' ? 'die Standardabweichung $s_0$' : 'die Dispersität $s_0/x_{1,0}$'}.`),
+        label: ask === 's' ? '$s_0$ =' : '$s_0/x_{1,0}$ =', unit: ask === 's' ? U : '', answer: ans, tol: 0.02, errors: errors,
+        hint: T('$x_{1,0} = M_{1,0}$, $M_{2,0}$ = mean of $x^2$, then $s_0^2 = M_{2,0} - M_{1,0}^2$.', '$x_{1,0} = M_{1,0}$, $M_{2,0}$ = Mittelwert von $x^2$, dann $s_0^2 = M_{2,0} - M_{1,0}^2$.'),
+        solution: `$$M_{1,0} = ${f} \\times ${a} + ${+(1 - f).toFixed(2)} \\times ${b} = ${tnum(M1)}\\ ${UT},\\qquad M_{2,0} = ${f} \\times ${a}^2 + ${+(1 - f).toFixed(2)} \\times ${b}^2 = ${tnum(f * a * a + (1 - f) * b * b)}\\ ${UT}^2$$` +
+          `$$s_0 = \\sqrt{M_{2,0} - M_{1,0}^2} = ${tnum(s)}\\ ${UT}${ask === 's' ? '' : ',\\qquad \\frac{s_0}{x_{1,0}} = ' + tnum(s / M1)}$$`,
+      };
+    } },
+  ];
+
+  App.lesson('05', {
+    ready: true,
+    short: () => T('Middle and width', 'Mitte und Breite'),
+    question: () => T('Where is the middle of a sample?', 'Wo liegt die Mitte einer Probe?'),
+    sub: () => T('Mode, median, balanced mean, Sauter diameter, standard deviation and dispersity, and how each depends on the weighting.',
+      'Modalwert, Median, Schwerpunkt, Sauterdurchmesser, Standardabweichung und Dispersität, und wie jeder von der Gewichtung abhängt.'),
+    mount: (root, mode) => {
+      plate = null; cum = null; readoutEl = null; settingsHost = null; mountRoot = null; middleHost = null; widthHost = null; sauterHost = null;
+      if (mode === 'look') mountLook(root);
+      else if (mode === 'test') root.appendChild(App.TestPanel('05', GENS));
+      else mountPlay(root);
+    },
+    gens: GENS,
+  });
+})();
 /* ==== part: stubs.js ==== */
 /* Lessons still being built: titles and questions for the start page and the menu. */
 (function () {
@@ -3137,8 +3915,6 @@ var App = (function () {
     () => T('From a measured property $\\xi$ to the size $x$, with the factor $\\mathrm{d}\\xi/\\mathrm{d}x$.', 'Von einer Messgröße $\\xi$ zur Größe $x$, mit dem Faktor $\\mathrm{d}\\xi/\\mathrm{d}x$.'));
   stub('04', () => T('Discrete and continuous', 'Diskret und stetig'), () => T('When do bars become a curve?', 'Wann werden Balken zur Kurve?'),
     () => T('Histograms from samples approach the continuous density; sums become integrals.', 'Histogramme aus Stichproben nähern sich der stetigen Dichte; Summen werden zu Integralen.'));
-  stub('05', () => T('Middle and width', 'Mitte und Breite'), () => T('Where is the middle of a sample?', 'Wo liegt die Mitte einer Probe?'),
-    () => T('Mode, median, balanced mean, Sauter diameter, standard deviation and dispersity.', 'Modalwert, Median, Schwerpunkt, Sauterdurchmesser, Standardabweichung und Dispersität.'));
 })();
 </script>
 <!-- ===== VENDOR: fonts (SIL Open Font License 1.1) and KaTeX 0.16.22 (MIT). Nothing below is hand-edited. ===== -->
