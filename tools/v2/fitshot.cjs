@@ -1,0 +1,28 @@
+const { chromium, devices } = require('playwright');
+const path = require('path');
+(async () => {
+  const file = 'file://' + path.resolve(process.argv[2]), out = process.argv[3];
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  await p.goto(file + '#EN/MCC/4'); await p.waitForTimeout(300);
+  await p.locator('.ptabs button', { hasText: 'Try' }).click();
+  await p.locator('.seg button', { hasText: 'Microscope images' }).click();
+  await p.locator('.seg button', { hasText: 'Continuous fit' }).click(); await p.waitForTimeout(200);
+  await p.screenshot({ path: out + '/MCC-4-fit.png' });
+  await p.goto(file + '#EN/MCC/5'); await p.waitForTimeout(300);
+  await p.locator('.ptabs button', { hasText: 'Try' }).click();
+  await p.locator('.seg button', { hasText: 'r = 3' }).click(); await p.waitForTimeout(200);
+  await p.screenshot({ path: out + '/MCC-5-om.png' });
+  await p.goto(file + '#EN/CEM/4'); await p.waitForTimeout(300);
+  await p.locator('.ptabs button', { hasText: 'Try' }).click();
+  await p.locator('.seg button', { hasText: 'Continuous fit' }).click(); await p.waitForTimeout(200);
+  await p.screenshot({ path: out + '/CEM-4-warn.png' });
+  const m = await b.newPage({ ...devices['iPhone 13'] });
+  await m.goto(file + '#EN/MCC/4'); await m.waitForTimeout(400);
+  await m.screenshot({ path: out + '/phone-MCC-4.png', fullPage: true });
+  await m.goto(file + '#EN'); await m.waitForTimeout(400);
+  await m.screenshot({ path: out + '/phone-shelf.png' });
+  console.log('errors', errs);
+  await b.close();
+})();
