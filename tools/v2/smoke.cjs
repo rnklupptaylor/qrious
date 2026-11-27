@@ -19,6 +19,6 @@ const path = require('path');
     if (errs.length > n0) console.log(j, s, errs.slice(n0).join(' | '));
     if (out && shotJar.split(',').includes(j)) { const b3 = p.locator('.ptabs button', { hasText: 'Try' }); if (await b3.count()) await b3.click(); await p.waitForTimeout(200); await p.screenshot({ path: `${out}/${j}-${s}.png` }); }
   }
-  console.log('errors', errs.length);
+  console.log('errors', errs.length, errs.slice(0,4).join(' | '));
   await b.close();
 })();
